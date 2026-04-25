@@ -16,6 +16,17 @@ logger = get_logger()
 # Duration of the audio sample used for language detection
 LANG_DETECT_SAMPLE_MS = 30_000  # 30 s
 
+# Audio container formats that the OpenAI ``/v1/audio/transcriptions`` family
+# accepts directly (Whisper API, vLLM-served Whisper, Scaleway Generative
+# whisper-large-v3, etc.). For these we skip the WAV conversion and send the
+# file as-is — converting an already-compressed input to uncompressed WAV
+# inflates size by ~10×, which trips per-request size limits enforced
+# server-side (Scaleway: 100 MB; OpenAI: 25 MB).
+DIRECT_UPLOAD_SUFFIXES = {
+    ".wav", ".flac", ".ogg", ".mp3", ".mp4", ".m4a",
+    ".webm", ".mpeg", ".mpga",
+}
+
 
 class AudioTranscriber:
     """Transcribes audio in a single request (no chunking).
@@ -35,18 +46,27 @@ class AudioTranscriber:
         self.use_whisper_lang_detector = config.loader.transcriber.get("use_whisper_lang_detector", True)
 
     async def transcribe(self, file_path: Path) -> str:
-        # vLLM uses soundfile/libsndfile internally, which only supports WAV/FLAC/OGG.
-        # mp3, mp4, m4a, etc. raise "Format not recognised", so convert to WAV first.
+        # The default OpenAI / Whisper API contract (and Scaleway, which mirrors
+        # it) accepts the common compressed formats directly. We only fall back
+        # to a WAV conversion for exotic containers — see DIRECT_UPLOAD_SUFFIXES
+        # above. Sending the compressed file as-is keeps mp3/m4a/mp4 well below
+        # the 25-100 MB request-size cap enforced by these endpoints.
+        # vLLM-only deployments that use libsndfile (which doesn't decode mp3)
+        # will still work via the conversion fallback for .flv/.wma/etc.
 
         try:
             logger.bind(file=file_path.name)
-            if file_path.suffix.lower() == ".wav":
+            suffix = file_path.suffix.lower()
+            if suffix in DIRECT_UPLOAD_SUFFIXES:
                 wav_path = file_path
                 tmp_wav = None
-                sound = await asyncio.to_thread(AudioSegment.from_file, wav_path)
+                # We still need to load the audio so language detection can
+                # extract its 30-second sample. ``AudioSegment.from_file``
+                # uses ffmpeg under the hood, so it handles every format.
+                sound = await asyncio.to_thread(AudioSegment.from_file, file_path)
             else:
                 sound = await asyncio.to_thread(AudioSegment.from_file, file_path)
-                logger.info("Converting audio to WAV", duration_s=f"{len(sound) / 1000:.1f}")
+                logger.info("Converting audio to WAV (unsupported container)", duration_s=f"{len(sound) / 1000:.1f}")
                 tmp_wav = file_path.with_suffix(".wav")
                 await asyncio.to_thread(sound.export, tmp_wav, format="wav")
                 wav_path = tmp_wav
