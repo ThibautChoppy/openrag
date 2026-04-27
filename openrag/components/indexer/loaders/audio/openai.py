@@ -16,15 +16,16 @@ logger = get_logger()
 # Duration of the audio sample used for language detection
 LANG_DETECT_SAMPLE_MS = 30_000  # 30 s
 
-# Audio container formats that the OpenAI ``/v1/audio/transcriptions`` family
-# accepts directly (Whisper API, vLLM-served Whisper, Scaleway Generative
-# whisper-large-v3, etc.). For these we skip the WAV conversion and send the
-# file as-is — converting an already-compressed input to uncompressed WAV
-# inflates size by ~10×, which trips per-request size limits enforced
-# server-side (Scaleway: 100 MB; OpenAI: 25 MB).
-DIRECT_UPLOAD_SUFFIXES = {
-    ".wav", ".flac", ".ogg", ".mp3", ".mp4", ".m4a",
-    ".webm", ".mpeg", ".mpga",
+_DEFAULT_DIRECT_UPLOAD_SUFFIXES = {
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".mp3",
+    ".mp4",
+    ".m4a",
+    ".webm",
+    ".mpeg",
+    ".mpga",
 }
 
 
@@ -44,20 +45,22 @@ class AudioTranscriber:
         )
         self.model_name = config.loader.transcriber.model_name
         self.use_whisper_lang_detector = config.loader.transcriber.get("use_whisper_lang_detector", True)
+        raw = config.loader.transcriber.get("direct_upload_suffixes", "")
+        if raw:
+            self.direct_upload_suffixes = {s.strip() for s in raw.split("|") if s.strip()}
+        else:
+            self.direct_upload_suffixes = _DEFAULT_DIRECT_UPLOAD_SUFFIXES
 
     async def transcribe(self, file_path: Path) -> str:
-        # The default OpenAI / Whisper API contract (and Scaleway, which mirrors
-        # it) accepts the common compressed formats directly. We only fall back
-        # to a WAV conversion for exotic containers — see DIRECT_UPLOAD_SUFFIXES
-        # above. Sending the compressed file as-is keeps mp3/m4a/mp4 well below
-        # the 25-100 MB request-size cap enforced by these endpoints.
-        # vLLM-only deployments that use libsndfile (which doesn't decode mp3)
-        # will still work via the conversion fallback for .flv/.wma/etc.
+        # Formats in self.direct_upload_suffixes (configurable via
+        # TRANSCRIBER_DIRECT_UPLOAD_SUFFIXES) are sent as-is to avoid the ~10x
+        # size inflation from WAV conversion (Scaleway cap: 100 MB; OpenAI: 25 MB).
+        # Everything else falls back to WAV for vLLM/libsndfile deployments.
 
         try:
             logger.bind(file=file_path.name)
             suffix = file_path.suffix.lower()
-            if suffix in DIRECT_UPLOAD_SUFFIXES:
+            if suffix in self.direct_upload_suffixes:
                 wav_path = file_path
                 tmp_wav = None
                 # We still need to load the audio so language detection can
