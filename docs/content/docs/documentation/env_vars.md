@@ -121,10 +121,14 @@ Here are some other variables related to openai-compatible endpoint.
 
 </div>
 
-:::danger[About whisper with vLLM]
-As noted in [this PR](https://github.com/linagora/openrag/pull/134), the current vLLM implementation of Whisper can mis-detect the language and output English regardless of the source audio. For details, see [this vLLM issue](https://github.com/vllm-project/vllm/issues/14174).
+:::note[About whisper with vLLM and language detection]
+As noted in [this PR](https://github.com/linagora/openrag/pull/134), vLLM's Whisper implementation could mis-detect the language and output English regardless of the source audio. For details, see [this vLLM issue](https://github.com/vllm-project/vllm/issues/14174).
 
-To improve accuracy, we use a local Whisper-based language detector that is activated by default with the default setting (`USE_WHISPER_LANG_DETECTOR=true`). 
+This bug was fixed in **vLLM v0.17.0** ([PR #34342](https://github.com/vllm-project/vllm/pull/34342)). If you are running a vLLM version **older than v0.17.0**, set `USE_WHISPER_LANG_DETECTOR=true` to work around the issue: OpenRAG will use a local Whisper-based language detector to identify the source language and pass it explicitly to the transcription endpoint.
+
+If your deployment already uses vLLM ≥ v0.17.0, you can safely set `USE_WHISPER_LANG_DETECTOR=false` to skip the local detection step.
+
+The default OpenRAG transcriber stack now ships with **vLLM v0.19.1**, which includes the fix.
 :::
 
 ### Chunking

@@ -20,6 +20,6 @@ services:
     command: >
       --model ${TRANSCRIBER_MODEL:-openai/whisper-large-v3-turbo}
       --trust-remote-code
-      --gpu_memory_utilization 0.3
+      --gpu_memory_utilization 0.2
     # ports:
     #   - ${TRANSCRIBER_PORT:-8002}:8000
