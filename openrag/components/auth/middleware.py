@@ -139,16 +139,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 auth_mode == "oidc"
                 and path.startswith("/chainlit")
                 and "text/html" in request.headers.get("accept", "").lower()
-                and not request.cookies.get(SESSION_COOKIE_NAME)
                 and not request.headers.get("authorization", "").lower().startswith("bearer ")
             ):
-                next_path = path
-                if request.url.query:
-                    next_path = f"{path}?{request.url.query}"
-                return RedirectResponse(
-                    url=f"/auth/login?next={quote(next_path, safe='')}",
-                    status_code=302,
-                )
+                cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+                session_valid = False
+                if cookie_token:
+                    session = await vectordb.get_oidc_session_by_token.remote(cookie_token)
+                    session_valid = session is not None
+                if not session_valid:
+                    next_path = path
+                    if request.url.query:
+                        next_path = f"{path}?{request.url.query}"
+                    return RedirectResponse(
+                        url=f"/auth/login?next={quote(next_path, safe='')}",
+                        status_code=302,
+                    )
             return await call_next(request)
 
         user = None
