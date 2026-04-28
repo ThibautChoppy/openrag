@@ -143,11 +143,13 @@ class _StubVectorDB:
         self._sessions: dict[int, dict] = {}
         self._sessions_by_token: dict[str, int] = {}
         self._next_session_id = 1
+        self._next_user_id = 1000
         # Bind each underlying impl as an actor-style accessor.
         self.get_user_by_external_id = _RayMethodStub(
             "get_user_by_external_id", self._impl_get_user_by_external_id, self.calls
         )
         self.update_user_fields = _RayMethodStub("update_user_fields", self._impl_update_user_fields, self.calls)
+        self.create_user = _RayMethodStub("create_user", self._impl_create_user, self.calls)
         self.create_oidc_session = _RayMethodStub("create_oidc_session", self._impl_create_oidc_session, self.calls)
         self.get_oidc_session_by_token = _RayMethodStub(
             "get_oidc_session_by_token", self._impl_get_oidc_session_by_token, self.calls
@@ -185,6 +187,30 @@ class _StubVectorDB:
 
     def _impl_get_user_by_external_id(self, external_user_id: str):
         return self._users_by_sub.get(external_user_id)
+
+    def _impl_create_user(self, body):
+        # Accept either UserCreate or a plain dict, like the real Ray method
+        # would (Pydantic instances are serializable).
+        if hasattr(body, "model_dump"):
+            data = body.model_dump()
+        else:
+            data = dict(body)
+        user_id = self._next_user_id
+        self._next_user_id += 1
+        user = {
+            "id": user_id,
+            "display_name": data.get("display_name"),
+            "external_user_id": data.get("external_user_id"),
+            "email": (data.get("email").strip().lower() if data.get("email") else None),
+            "is_admin": bool(data.get("is_admin", False)),
+            "file_quota": data.get("file_quota"),
+            "file_count": 0,
+            "token": "or-stub",
+        }
+        self._users_by_id[user_id] = user
+        if data.get("external_user_id"):
+            self._users_by_sub[data["external_user_id"]] = user
+        return user
 
     def _impl_update_user_fields(self, user_id: int, fields: dict):
         user = self._users_by_id.get(user_id)
@@ -458,7 +484,7 @@ def test_callback_success_by_external_id(client, fresh_stub_vectordb):
 
 
 def test_callback_user_not_registered(client, fresh_stub_vectordb):
-    """Unknown sub → 403 (no email fallback, no auto-provisioning)."""
+    """Unknown sub → 403 by default (no email fallback, no auto-provisioning)."""
     _setup_jwks(client.oidc_router)
     state, nonce = _begin_login_and_extract_state(client)
     id_token = _sign_jwt(_id_token_payload(nonce, sub="sub-unknown", email="ghost@example.com"))
@@ -470,6 +496,141 @@ def test_callback_user_not_registered(client, fresh_stub_vectordb):
     )
     assert r.status_code == 403
     assert "not registered" in r.json()["detail"].lower()
+    # Without OIDC_AUTO_PROVISION_LOGIN, no user must have been created.
+    assert not any(c[0] == "create_user" for c in fresh_stub_vectordb.calls)
+
+
+def test_callback_auto_provisions_user_when_enabled(client, fresh_stub_vectordb, monkeypatch):
+    """OIDC_AUTO_PROVISION_LOGIN=true: unknown sub triggers user creation
+    from ID-token claims, never as admin, and login proceeds (302 + cookie)."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "true")
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(
+        _id_token_payload(
+            nonce,
+            sub="sub-new-user",
+            email="alice@example.com",
+            extra={"name": "Alice Liddell"},
+        )
+    )
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(
+        f"/auth/callback?code=c&state={state}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302, r.text
+    assert "openrag_session" in r.cookies
+
+    # create_user was called exactly once with the IdP claims.
+    create_calls = [c for c in fresh_stub_vectordb.calls if c[0] == "create_user"]
+    assert len(create_calls) == 1
+    body = create_calls[0][1][0]
+    data = body.model_dump() if hasattr(body, "model_dump") else dict(body)
+    assert data["external_user_id"] == "sub-new-user"
+    assert data["display_name"] == "Alice Liddell"
+    assert data["email"] == "alice@example.com"
+    assert data["is_admin"] is False  # auto-provisioned users are NEVER admin
+
+
+def test_callback_auto_provision_falls_back_to_sub_when_no_name(client, fresh_stub_vectordb, monkeypatch):
+    """When the IdP exposes no readable display name, a deterministic
+    ``oidc-<sub-prefix>`` placeholder is used so the UI always has something."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "true")
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(_id_token_payload(nonce, sub="abcdef0123456789", email=None, extra={}))
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(
+        f"/auth/callback?code=c&state={state}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302, r.text
+
+    create_calls = [c for c in fresh_stub_vectordb.calls if c[0] == "create_user"]
+    assert len(create_calls) == 1
+    body = create_calls[0][1][0]
+    data = body.model_dump() if hasattr(body, "model_dump") else dict(body)
+    assert data["display_name"] == "oidc-abcdef01"
+    assert data["email"] is None
+
+
+def test_callback_auto_provision_disabled_by_default(client, fresh_stub_vectordb, monkeypatch):
+    """Explicitly setting OIDC_AUTO_PROVISION_LOGIN=false (or unset) keeps the
+    historical 403 behaviour — non-breaking guard for existing deployments."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "false")
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(_id_token_payload(nonce, sub="sub-x", email="x@example.com", extra={"name": "X"}))
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+    assert r.status_code == 403
+    assert not any(c[0] == "create_user" for c in fresh_stub_vectordb.calls)
+
+
+def test_callback_auto_provision_syncs_existing_user_claims(client, fresh_stub_vectordb, monkeypatch):
+    """OIDC_AUTO_PROVISION_LOGIN=true also keeps display_name/email of an
+    already-known user in sync with the IdP claims on every login."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "true")
+    monkeypatch.delenv("OIDC_CLAIM_MAPPING", raising=False)
+    fresh_stub_vectordb.add_user(
+        user_id=99,
+        email="stale@example.com",
+        external_user_id="sub-existing",
+        display_name="Stale Name",
+    )
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(
+        _id_token_payload(
+            nonce,
+            sub="sub-existing",
+            email="fresh@example.com",
+            extra={"name": "Fresh Name"},
+        )
+    )
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+    assert r.status_code == 302, r.text
+
+    user = fresh_stub_vectordb._users_by_id[99]
+    assert user["display_name"] == "Fresh Name"
+    assert user["email"] == "fresh@example.com"
+    # User row was not re-created — only updated.
+    assert not any(c[0] == "create_user" for c in fresh_stub_vectordb.calls)
+    assert sum(1 for c in fresh_stub_vectordb.calls if c[0] == "update_user_fields") == 1
+
+
+def test_callback_auto_provision_no_db_write_when_claims_match(client, fresh_stub_vectordb, monkeypatch):
+    """With AUTO_PROVISION_LOGIN on but claims already matching the stored row,
+    no update_user_fields call is made (the no-op filter avoids DB churn)."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "true")
+    monkeypatch.delenv("OIDC_CLAIM_MAPPING", raising=False)
+    fresh_stub_vectordb.add_user(
+        user_id=101,
+        email="same@example.com",
+        external_user_id="sub-stable",
+        display_name="Same Name",
+    )
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(
+        _id_token_payload(
+            nonce,
+            sub="sub-stable",
+            email="same@example.com",
+            extra={"name": "Same Name"},
+        )
+    )
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+    assert r.status_code == 302, r.text
+    assert not any(c[0] == "update_user_fields" for c in fresh_stub_vectordb.calls)
 
 
 def test_callback_applies_claim_mapping_from_id_token(client, fresh_stub_vectordb, monkeypatch):

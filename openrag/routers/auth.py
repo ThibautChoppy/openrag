@@ -31,6 +31,7 @@ from components.auth import (
 )
 from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
+from models.user import UserCreate
 from utils.dependencies import get_vectordb
 from utils.logger import get_logger
 
@@ -63,6 +64,40 @@ def _token_encryption_key() -> str:
 
 def _claim_source() -> str:
     return os.getenv("OIDC_CLAIM_SOURCE", "id_token").strip().lower()
+
+
+def _auto_provision_login() -> bool:
+    """Whether to auto-provision a non-admin user on first OIDC login.
+
+    Defaults to ``False`` — keeping the historical "admin pre-creates every
+    user" model. Set ``OIDC_AUTO_PROVISION_LOGIN=true`` to enable: when the
+    callback receives a ``sub`` that isn't yet mapped to an OpenRAG user,
+    a row is created on the fly using the ID-token claims (``name`` /
+    ``preferred_username`` for the display name, ``email`` if present).
+
+    Auto-provisioned users are **never** admin and inherit the default file
+    quota — operators can promote / adjust afterwards via ``/users/``.
+    """
+    return os.getenv("OIDC_AUTO_PROVISION_LOGIN", "false").strip().lower() == "true"
+
+
+def _display_name_from_claims(claims: dict[str, Any], sub: str) -> str:
+    """Pick a sensible display name from the standard OIDC claims.
+
+    Falls back to a short ``sub`` prefix when nothing readable is available
+    so the user row always has something printable for the UI.
+    """
+    for key in ("name", "preferred_username"):
+        value = claims.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    given = claims.get("given_name") or ""
+    family = claims.get("family_name") or ""
+    composed = f"{given} {family}".strip()
+    if composed:
+        return composed
+    # Last-resort fallback — keep enough of the sub to be unique-ish in the UI.
+    return f"oidc-{sub[:8]}"
 
 
 def _claim_mapping() -> dict[str, str]:
@@ -308,12 +343,72 @@ async def callback(request: Request, code: str | None = None, state: str | None 
     vdb = get_vectordb()
     user: dict[str, Any] | None = await vdb.get_user_by_external_id.remote(sub)
     if user is None:
-        logger.warning(f"OIDC login rejected — user not registered (sub={sub!r})")
-        return _json_error(
-            status.HTTP_403_FORBIDDEN,
-            "User not registered",
-            delete_state_cookie=True,
+        if not _auto_provision_login():
+            logger.warning(f"OIDC login rejected — user not registered (sub={sub!r})")
+            return _json_error(
+                status.HTTP_403_FORBIDDEN,
+                "User not registered",
+                delete_state_cookie=True,
+            )
+
+        # Auto-provision: create a non-admin user from the ID-token claims.
+        # Email is best-effort — populated when the IdP exposes it on the
+        # ``email`` claim (typically via the ``email`` scope, which is in the
+        # default ``OIDC_SCOPES``). Display name falls back to the sub when
+        # the IdP exposes nothing readable.
+        display_name = _display_name_from_claims(bundle.claims, sub)
+        email = bundle.claims.get("email")
+        try:
+            user = await vdb.create_user.remote(
+                UserCreate(
+                    display_name=display_name,
+                    external_user_id=sub,
+                    email=email if isinstance(email, str) and email.strip() else None,
+                    is_admin=False,
+                )
+            )
+        except Exception as e:
+            # Race condition (concurrent first-login) or DB failure — try to
+            # recover by re-reading; if still missing, surface a 500 so the
+            # operator notices instead of silently masking the problem.
+            logger.exception(f"OIDC auto-provisioning failed for sub={sub!r}: {e}")
+            user = await vdb.get_user_by_external_id.remote(sub)
+            if user is None:
+                return _json_error(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    "Failed to provision user",
+                    delete_state_cookie=True,
+                )
+        else:
+            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r}, display_name={display_name!r})")
+
+    # --- 4b. Auto-provision: keep display_name + email in sync with claims ----
+    # When OIDC_AUTO_PROVISION_LOGIN is on, the IdP is treated as the source of
+    # truth for these two fields on every login (not just at creation), so a
+    # user renamed in the IdP doesn't drift out of sync. No-op for users whose
+    # row already matches the claims (including the user we just created).
+    if _auto_provision_login():
+        derived_display = _display_name_from_claims(bundle.claims, sub)
+        derived_email_raw = bundle.claims.get("email")
+        derived_email = (
+            derived_email_raw.strip() if isinstance(derived_email_raw, str) and derived_email_raw.strip() else None
         )
+
+        sync_updates: dict[str, Any] = {}
+        if derived_display and user.get("display_name") != derived_display:
+            sync_updates["display_name"] = derived_display
+        if derived_email is not None and user.get("email") != derived_email:
+            sync_updates["email"] = derived_email
+
+        if sync_updates:
+            try:
+                await vdb.update_user_fields.remote(user["id"], sync_updates)
+            except Exception as e:
+                logger.warning(f"OIDC auto-provision sync failed for user_id={user['id']}: {e}")
+            else:
+                refreshed = await vdb.get_user_by_external_id.remote(sub)
+                if refreshed is not None:
+                    user = refreshed
 
     # --- 5. Optional claim-mapping update --------------------------------------
     mapping = _claim_mapping()
