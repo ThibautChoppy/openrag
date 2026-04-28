@@ -380,10 +380,35 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                     delete_state_cookie=True,
                 )
         else:
-            logger.info(
-                f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r}, "
-                f"display_name={display_name!r})"
-            )
+            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r}, display_name={display_name!r})")
+
+    # --- 4b. Auto-provision: keep display_name + email in sync with claims ----
+    # When OIDC_AUTO_PROVISION_LOGIN is on, the IdP is treated as the source of
+    # truth for these two fields on every login (not just at creation), so a
+    # user renamed in the IdP doesn't drift out of sync. No-op for users whose
+    # row already matches the claims (including the user we just created).
+    if _auto_provision_login():
+        derived_display = _display_name_from_claims(bundle.claims, sub)
+        derived_email_raw = bundle.claims.get("email")
+        derived_email = (
+            derived_email_raw.strip() if isinstance(derived_email_raw, str) and derived_email_raw.strip() else None
+        )
+
+        sync_updates: dict[str, Any] = {}
+        if derived_display and user.get("display_name") != derived_display:
+            sync_updates["display_name"] = derived_display
+        if derived_email is not None and user.get("email") != derived_email:
+            sync_updates["email"] = derived_email
+
+        if sync_updates:
+            try:
+                await vdb.update_user_fields.remote(user["id"], sync_updates)
+            except Exception as e:
+                logger.warning(f"OIDC auto-provision sync failed for user_id={user['id']}: {e}")
+            else:
+                refreshed = await vdb.get_user_by_external_id.remote(sub)
+                if refreshed is not None:
+                    user = refreshed
 
     # --- 5. Optional claim-mapping update --------------------------------------
     mapping = _claim_mapping()

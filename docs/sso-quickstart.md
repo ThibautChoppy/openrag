@@ -92,6 +92,7 @@ OIDC_TOKEN_ENCRYPTION_KEY=XFlT-ZfXkdqf0v-5Z8kVt9xhU6c7Z4z0ZY8Z4Z4Z4=
 # OIDC_SCOPES="openid email profile offline_access"   # default
 # OIDC_CLAIM_SOURCE=id_token                          # default ; alternative: userinfo
 # OIDC_CLAIM_MAPPING=                                 # default: empty (no sync of display_name/email from IdP)
+# OIDC_AUTO_PROVISION_LOGIN=false                     # default ; true = create users on first login from claims (see Step 5)
 
 # ⚠ Where the IdP sends the user AFTER logging out.
 #   A ("/") lands on the OpenRag root, which immediately re-triggers
@@ -125,7 +126,9 @@ By default OpenRag reads the claims from the verified ID token (`OIDC_CLAIM_SOUR
 
 ## Step 5 — Pre-provision users
 
-OpenRag **does not auto-create users** on first login. Each user must exist in the database with their OIDC `sub` stored in `external_user_id`.
+By default, OpenRag **does not auto-create users** on first login. Each user must exist in the database with their OIDC `sub` stored in `external_user_id`.
+
+> **Skip this step entirely** by setting `OIDC_AUTO_PROVISION_LOGIN=true` in your `.env`. The callback then creates a non-admin user from the ID-token claims on first login and keeps `display_name` + `email` in sync with the IdP on every subsequent login. The trade-off: your IdP's user list becomes the source of truth for OpenRag accounts. See `docs/oidc.md` → [Auto-provisioning](./oidc.md#auto-provisioning-optional) for the full trust-model.
 
 Ask the IdP admin for each user's `sub` claim value (stable identifier, NOT the username). Then create the user via the OpenRag admin API — you'll need an admin `AUTH_TOKEN` for this:
 

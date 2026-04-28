@@ -8,12 +8,14 @@ This guide walks you through configuring and using OpenRag's OIDC authentication
 2. [Architecture](#architecture)
 3. [Configuration](#configuration)
 4. [User Pre-provisioning](#user-pre-provisioning)
-5. [Keycloak Setup](#keycloak-setup)
-6. [LemonLDAP::NG Setup](#lemonldapng-setup)
-7. [Programmatic Access](#programmatic-access)
-8. [Back-Channel Logout](#back-channel-logout)
-9. [Troubleshooting](#troubleshooting)
-10. [Security Considerations](#security-considerations)
+5. [Claim Mapping (optional)](#claim-mapping-optional)
+6. [Auto-provisioning (optional)](#auto-provisioning-optional)
+7. [Keycloak Setup](#keycloak-setup)
+8. [LemonLDAP::NG Setup](#lemonldapng-setup)
+9. [Programmatic Access](#programmatic-access)
+10. [Back-Channel Logout](#back-channel-logout)
+11. [Troubleshooting](#troubleshooting)
+12. [Security Considerations](#security-considerations)
 
 ---
 
@@ -109,6 +111,7 @@ All variables must be set when `AUTH_MODE=oidc`. If any required variable is mis
 | `OIDC_TOKEN_ENCRYPTION_KEY` | Yes* | — | Fernet key for encrypting tokens at rest (see [Generating the Fernet Key](#generating-the-fernet-key)) |
 | `OIDC_CLAIM_SOURCE` | No | `id_token` | Where to read claims for [Claim Mapping](#claim-mapping-optional): `id_token` (verified JWT) or `userinfo` (`/userinfo` endpoint) |
 | `OIDC_CLAIM_MAPPING` | No | — | Optional CSV of `db_field:claim` pairs to copy claims into user fields on every login (e.g., `display_name:name,email:email`). See [Claim Mapping](#claim-mapping-optional). |
+| `OIDC_AUTO_PROVISION_LOGIN` | No | `false` | When `true`, an unknown `sub` triggers creation of a non-admin user from the ID-token claims instead of returning `403 User not registered`. Also keeps the user's `display_name` and `email` in sync with the claims on every subsequent login. See [Auto-provisioning](#auto-provisioning-optional). |
 | `OIDC_SCOPES` | No | `openid email profile offline_access` | Space-separated OIDC scopes; include `offline_access` for refresh tokens |
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | No | — | URL the IdP sends the user to after RP-initiated logout. **No default**: if unset AND the IdP doesn't have an `end_session_endpoint`, `/auth/logout` returns a plain 200 confirming the logout. Avoid pointing this to an OpenRag URL (triggers re-auth — silent SSO loop). |
 
@@ -178,7 +181,9 @@ OIDC_POST_LOGOUT_REDIRECT_URI=/
 
 ## User Pre-provisioning
 
-OIDC requires users to be pre-provisioned in OpenRag's database. There is **no automatic user creation** on login. User matching is performed **exclusively** by `external_user_id == sub`: the admin MUST set each user's `external_user_id` to the exact OIDC `sub` claim the IdP will emit for that user.
+By default, OIDC requires users to be pre-provisioned in OpenRag's database — there is **no automatic user creation** on login. User matching is performed **exclusively** by `external_user_id == sub`: the admin MUST set each user's `external_user_id` to the exact OIDC `sub` claim the IdP will emit for that user.
+
+If pre-provisioning every user is impractical at your scale, see [Auto-provisioning](#auto-provisioning-optional) for an opt-in flag that lets the callback create users on the fly from ID-token claims.
 
 ### Admin Pre-provisioning
 
@@ -295,6 +300,47 @@ With `OIDC_CLAIM_MAPPING=display_name:name,email:email` and `OIDC_CLAIM_SOURCE=i
 | `email: "alice@example.com"` | `email = "alice@example.com"` |
 | `sub: "kc-alice-uuid"` | (used for matching only, never written) |
 | `is_admin: true` | ignored (not in whitelist) |
+
+---
+
+## Auto-provisioning (optional)
+
+By default, an unknown `sub` is rejected with `403 User not registered` and the admin must pre-create the user via `POST /users/`. For deployments where every IdP user should be allowed in without manual provisioning, set `OIDC_AUTO_PROVISION_LOGIN=true`.
+
+### When to Use It
+
+- Your IdP already gates who can issue valid tokens, so its user list is the source of truth.
+- Manual pre-provisioning at corporate scale is impractical.
+- You want a user renamed in the IdP to be reflected in OpenRag automatically.
+
+### Behavior
+
+When `OIDC_AUTO_PROVISION_LOGIN=true`:
+
+- **Unknown `sub`**: a non-admin user is created from the ID-token claims.
+
+  | User column | Source |
+  |-------------|--------|
+  | `external_user_id` | `sub` (always) |
+  | `display_name` | `name` then `preferred_username` then `<given_name> <family_name>` then `oidc-<8-char-sub-prefix>` |
+  | `email` | `email` claim if present, else `null` |
+  | `is_admin` | always `false` (operators promote afterwards via `/users/`) |
+  | `file_quota` | server default (`DEFAULT_FILE_QUOTA`) |
+
+- **Known `sub`**: `display_name` and `email` are kept in sync with the ID-token claims on every login. A field is only written when the IdP value differs from the stored one (no DB churn on identical values).
+
+`is_admin`, `external_user_id`, `file_quota`, and `token` are never written via this path — same security boundary as [Claim Mapping](#claim-mapping-optional).
+
+### Interaction with Claim Mapping
+
+The two flags are independent and compose cleanly:
+
+- `OIDC_AUTO_PROVISION_LOGIN=true` alone is enough to keep `display_name` + `email` synced. No `OIDC_CLAIM_MAPPING` needed.
+- If both are set, `OIDC_CLAIM_MAPPING` runs after the auto-provision sync and can override it (useful when the operator wants `display_name` to come from a non-default claim).
+
+### Threat Model
+
+Enabling auto-provisioning shifts the trust boundary: the IdP's user list becomes the source of truth for OpenRag accounts. Strict-whitelist deployments leave the flag unset and keep the historical `403`. There is no path to grant `is_admin=true` via OIDC claims; promotion remains an explicit admin action.
 
 ---
 
@@ -659,7 +705,9 @@ OpenRag builds the discovery URL by stripping any trailing slash internally, so 
 
 **Error**: After a successful IdP login, OpenRag responds with `403 {"detail": "User not registered"}` at `/auth/callback`.
 
-**Cause**: User matching is now performed **exclusively** by `users.external_user_id == sub`. There is no email fallback and no auto-provisioning. The user either doesn't exist yet, or their `external_user_id` column is not set (or does not match the IdP's `sub`).
+**Cause**: User matching is performed **exclusively** by `users.external_user_id == sub`. There is no email fallback. The user either doesn't exist yet, or their `external_user_id` column is not set (or does not match the IdP's `sub`).
+
+> If pre-provisioning every user is impractical, set `OIDC_AUTO_PROVISION_LOGIN=true` to let the callback create users on the fly from the ID-token claims. See [Auto-provisioning](#auto-provisioning-optional) for the trust-model implications.
 
 **Solution**: The admin must pre-provision the user with the *exact* `sub` the IdP emits. Discover the IdP's `sub` for the user (e.g., Keycloak: **Users** → open the user → copy the `ID` field; or decode an ID token for that user with <https://jwt.io> and read the `sub` claim).
 
