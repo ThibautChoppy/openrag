@@ -16,18 +16,6 @@ logger = get_logger()
 # Duration of the audio sample used for language detection
 LANG_DETECT_SAMPLE_MS = 30_000  # 30 s
 
-_DEFAULT_DIRECT_UPLOAD_SUFFIXES = {
-    ".wav",
-    ".flac",
-    ".ogg",
-    ".mp3",
-    ".mp4",
-    ".m4a",
-    ".webm",
-    ".mpeg",
-    ".mpga",
-}
-
 
 class AudioTranscriber:
     """Transcribes audio in a single request (no chunking).
@@ -44,12 +32,8 @@ class AudioTranscriber:
             timeout=config.loader.transcriber.timeout,
         )
         self.model_name = config.loader.transcriber.model_name
-        self.use_whisper_lang_detector = config.loader.transcriber.get("use_whisper_lang_detector", True)
-        raw = config.loader.transcriber.get("direct_upload_suffixes", "")
-        if raw:
-            self.direct_upload_suffixes = {s.strip() for s in raw.split("|") if s.strip()}
-        else:
-            self.direct_upload_suffixes = _DEFAULT_DIRECT_UPLOAD_SUFFIXES
+        self.use_whisper_lang_detector = config.loader.transcriber.use_whisper_lang_detector
+        self.direct_upload_suffixes = config.loader.transcriber.direct_upload_suffixes
 
     async def transcribe(self, file_path: Path) -> str:
         # Formats in self.direct_upload_suffixes (configurable via
