@@ -55,7 +55,53 @@ match reality, then record the reasoning here.
 
 ---
 
-## Template for future entries
+## Phase 5 — Core domain logic for retrieval, chunking, prompts (2026-04-29)
+
+**1. New `RetrievalSearcher` port in `core/retrieval/searcher.py`, separate from
+the narrow `VectorStore` ABC.**
+The retriever needs four operations (search by query string, multi-query
+search, related-chunk lookup, ancestor lookup) that the Phase-4
+`VectorStore` ABC does not cover — that ABC is intentionally narrow
+(`search(embedding, top_k)`). We added a transitional ABC the retriever
+depends on, implemented by `services/storage/milvus_ray_shim.py` over the
+legacy Ray actor.
+- Why: STRATEGY §5A says the retriever should "call `VectorStore.search()`
+  (port method), not `vectordb.async_search.remote()`". But the legacy Ray
+  actor's `async_search` takes a query *string* and embeds internally; the
+  narrow `VectorStore.search(embedding, ...)` ABC doesn't fit. Pre-embedding
+  in the shim before calling Ray is impractical because the actor also owns
+  BM25 and surrounding-chunks semantics. A retrieval-facing port keeps the
+  retriever clean of Ray today and survives Phase 7 — when the Vectordb
+  god object is decomposed, these methods either move onto a richer
+  `VectorStore` or split between `VectorStore` and `ChunkRepository`.
+- Alternative considered: extend `VectorStore` with the four legacy methods.
+  Rejected — bloats the ABC with operations that should not exist past
+  Phase 7. Also considered: skip the new core port and have the retriever
+  call the Ray actor through the shim with the legacy method names —
+  rejected because that leaks legacy method names into core/ and makes the
+  retriever harder to test.
+
+**2. Skipped: bringing up integration tests for the new code.**
+Phase 5 ships pure-domain unit tests only (50 new tests in `core/`, no Ray /
+Milvus / real LLM). The new pipeline is dormant until Phase 8 wires it.
+- Why: Mode 2 forbids touching the legacy wiring; the new pipeline has
+  nowhere to be plugged in yet. Integration coverage will land with Phase 8
+  orchestrators (or Phase 7 storage if it goes first).
+- Alternative considered: stand up a fake searcher in an integration
+  fixture and run a full retriever-pipeline-RRF round trip. Defers the
+  same coverage to Phase 8 with less code; not worth the extra fixtures.
+
+**3. `Query`, `SearchQueries`, `TemporalPredicate` lifted into
+`core/models/query.py`.**
+The legacy `components/pipeline.py` defined these inline. The new
+`RetrieverPipeline` consumes them — they're domain types, not pipeline
+internals.
+- Why: STRATEGY §2 calls these out as `pipeline.py SearchQueries → core/models/query.py`.
+- Alternative considered: keep them in `core/retrieval/`. Rejected — they
+  describe a query in the abstract; the orchestrator (Phase 8) and the API
+  layer will both use them, not just retrieval.
+
+---
 
 ## Phase 1 — Registry + Exceptions (2026-04-21)
 

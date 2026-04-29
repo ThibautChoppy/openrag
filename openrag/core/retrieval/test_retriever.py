@@ -133,9 +133,7 @@ async def test_hyde_retriever_uses_hyde_only_by_default():
 async def test_hyde_retriever_combine_appends_original_query():
     s = FakeSearcher()
     llm = FakeLLM(response="hypothetical")
-    r = HyDeRetriever(
-        searcher=s, llm=llm, hyde_template="Answer: {question}", combine=True
-    )
+    r = HyDeRetriever(searcher=s, llm=llm, hyde_template="Answer: {question}", combine=True)
     await r.retrieve(partition=["p1"], query="real")
     assert s.multi_calls[0]["queries"] == ["hypothetical", "real"]
 

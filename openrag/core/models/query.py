@@ -85,9 +85,7 @@ class Query(BaseModel):
 class SearchQueries(BaseModel):
     """Collection of sub-queries produced by query decomposition."""
 
-    query_list: list[Query] = Field(
-        ..., description="Search sub-queries to retrieve relevant documents."
-    )
+    query_list: list[Query] = Field(..., description="Search sub-queries to retrieve relevant documents.")
 
     def __str__(self) -> str:
         return " --- ".join(str(q) for q in self.query_list)

@@ -250,5 +250,3 @@ class RecursiveSplitter(BaseChunker):
             is_separator_regex=True,
             separators=["\n", r"(?<=[\.\?\!])"],
         )
-
-

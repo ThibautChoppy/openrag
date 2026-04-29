@@ -11,9 +11,13 @@ from .chat_prompt_builder import (
 from .contextualization_builder import (
     BASE_CHUNK_FORMAT,
     CHUNK_FORMAT,
-    build_messages as build_contextualization_messages,
-    build_user_message as build_contextualization_user_message,
     wrap_chunk_with_context,
+)
+from .contextualization_builder import (
+    build_messages as build_contextualization_messages,
+)
+from .contextualization_builder import (
+    build_user_message as build_contextualization_user_message,
 )
 from .map_reduce_builder import (
     SYSTEM_PROMPT_MAP,

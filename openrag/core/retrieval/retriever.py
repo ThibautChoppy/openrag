@@ -231,9 +231,7 @@ async def _expand_with_related_chunks(
 
     async def _safe_related(part: str, rel_id: str) -> list[Chunk]:
         try:
-            return await searcher.get_related_chunks(
-                partition=part, relationship_id=rel_id, limit=related_limit
-            )
+            return await searcher.get_related_chunks(partition=part, relationship_id=rel_id, limit=related_limit)
         except Exception:
             return []
 

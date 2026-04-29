@@ -207,9 +207,7 @@ def chunk_table(
             if prev_last_row:
                 current_rows.append(prev_last_row)
             current_rows.append(group_txt)
-            current_size = (
-                header_ntoks + (length_function(prev_last_row) if prev_last_row else 0) + g_ntoks
-            )
+            current_size = header_ntoks + (length_function(prev_last_row) if prev_last_row else 0) + g_ntoks
         else:
             current_rows.append(group_txt)
             current_size += g_ntoks
@@ -218,7 +216,4 @@ def chunk_table(
     if current_rows:
         subtables.append("\n".join(current_rows))
 
-    return [
-        MDElement(type="table", content=subtable, page_number=table_element.page_number)
-        for subtable in subtables
-    ]
+    return [MDElement(type="table", content=subtable, page_number=table_element.page_number) for subtable in subtables]

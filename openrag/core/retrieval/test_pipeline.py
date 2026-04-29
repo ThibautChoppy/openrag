@@ -21,9 +21,7 @@ class FakeRetriever(Retriever):
         self.expansion_enabled = expansion_enabled
 
     async def retrieve(self, partition, query, filter=None, filter_params=None):
-        self.calls.append(
-            {"partition": partition, "query": query, "filter": filter, "filter_params": filter_params}
-        )
+        self.calls.append({"partition": partition, "query": query, "filter": filter, "filter_params": filter_params})
         if self.results_queue:
             return self.results_queue.pop(0)
         return []

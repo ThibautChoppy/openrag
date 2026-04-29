@@ -31,10 +31,7 @@ def test_recursive_splitter_chunks_simple_document():
 
 
 def test_recursive_splitter_emits_table_chunks():
-    table = (
-        "| Col | Val |\n|-----|-----|\n"
-        + "\n".join(f"| Group{i} | {' '.join(['x'] * 50)} |" for i in range(6))
-    )
+    table = "| Col | Val |\n|-----|-----|\n" + "\n".join(f"| Group{i} | {' '.join(['x'] * 50)} |" for i in range(6))
     splitter = RecursiveSplitter(chunk_size=20, chunk_overlap_rate=0.0, length_function=_word_tokens)
     doc = ProcessedDocument(
         document_id="d1",
@@ -47,9 +44,7 @@ def test_recursive_splitter_emits_table_chunks():
 
 def test_recursive_splitter_skips_image_placeholder():
     placeholder_md = (
-        "Real text first.\n\n"
-        "<image_description>\n\n[Image Placeholder]\n\n</image_description>\n\n"
-        "Real text after."
+        "Real text first.\n\n<image_description>\n\n[Image Placeholder]\n\n</image_description>\n\nReal text after."
     )
     splitter = RecursiveSplitter(chunk_size=200, chunk_overlap_rate=0.0, length_function=_word_tokens)
     doc = ProcessedDocument(

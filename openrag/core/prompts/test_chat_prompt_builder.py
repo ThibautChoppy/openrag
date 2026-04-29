@@ -42,9 +42,7 @@ def test_format_context_drops_to_fit_budget():
 
 def test_format_context_no_numbering():
     docs = ["a", "b"]
-    text, included = format_context(
-        docs, max_context_tokens=100, length_function=_word_tokens, number_sources=False
-    )
+    text, included = format_context(docs, max_context_tokens=100, length_function=_word_tokens, number_sources=False)
     assert "[Source" not in text
     assert text == f"a{SOURCE_SEPARATOR}b"
     assert included == [0, 1]
@@ -74,9 +72,7 @@ def test_format_web_context_falls_back_to_snippet():
 
 def test_format_web_context_continues_numbering_with_start_index():
     results = [_FakeWeb("T1", "u1", "snip1")]
-    text, nums, _ = format_web_context(
-        results, length_function=_word_tokens, start_index=4, max_tokens=100
-    )
+    text, nums, _ = format_web_context(results, length_function=_word_tokens, start_index=4, max_tokens=100)
     assert "[Source 4]" in text
     assert nums == [4]
 

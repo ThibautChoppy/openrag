@@ -106,14 +106,8 @@ class TestChunkTable:
 
     def test_chunking_preserves_groups(self):
         header = "| Country | Strategy | Goals |"
-        g1 = (
-            "| USA     | Cyber    | Goal 1 |\n|         |          | Goal 2 |\n"
-            "|         |          | Goal 3 |"
-        )
-        g2 = (
-            "| Mexico  | Defense  | Goal X |\n|         |          | Goal Y |\n"
-            "|         |          | Goal Z |"
-        )
+        g1 = "| USA     | Cyber    | Goal 1 |\n|         |          | Goal 2 |\n|         |          | Goal 3 |"
+        g2 = "| Mexico  | Defense  | Goal X |\n|         |          | Goal Y |\n|         |          | Goal Z |"
         table = f"{header}\n|----|----|----|\n{g1}\n{g2}\n"
         elem = MDElement(type="table", content=table, page_number=2)
         chunk_size = _mock_length(table) // 2
