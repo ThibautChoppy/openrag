@@ -182,6 +182,3 @@ services:
     profiles:
       - "cpu"
 
-networks:
-  default:
-    name: openrag_default
