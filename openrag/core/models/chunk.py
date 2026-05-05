@@ -16,6 +16,26 @@ class ChunkType(str, Enum):
     CONTEXTUALIZED = "contextualized"
 
 
+# Pre-Phase-5 chunkers stamped Document metadata with the raw MDElement
+# literal (`"image"`) for image elements. Deployments upgraded without
+# re-indexing have those values in Milvus; map them to the current enum
+# at read time so retrieval doesn't crash on legacy data.
+_CHUNK_TYPE_LEGACY_ALIASES = {"image": ChunkType.IMAGE_CAPTION}
+
+
+def _coerce_chunk_type(value: Any) -> ChunkType:
+    if isinstance(value, ChunkType):
+        return value
+    if value in _CHUNK_TYPE_LEGACY_ALIASES:
+        return _CHUNK_TYPE_LEGACY_ALIASES[value]
+    try:
+        return ChunkType(value)
+    except (ValueError, TypeError):
+        # Unknown value from upstream/legacy data — fall back to TEXT rather
+        # than crash the retrieval call.
+        return ChunkType.TEXT
+
+
 class Chunk(BaseModel):
     """A chunk of text extracted from a document, optionally embedded."""
 
@@ -44,13 +64,19 @@ class Chunk(BaseModel):
         Import is deferred to method body so core/ stays pure at import time.
         """
         metadata = dict(doc.metadata) if doc.metadata else {}
+        # Milvus assigns the primary key `_id` as INT64 (auto_id), so the value
+        # comes back as a Python int. Chunk.id is typed `str`, so coerce here
+        # rather than loosen the model — keeps the domain type strict while the
+        # store-specific shape is contained in the conversion boundary.
+        raw_id = metadata.pop("_id", None)
+        chunk_id = str(raw_id) if raw_id is not None else str(uuid.uuid4())
         return cls(
-            id=metadata.pop("_id", str(uuid.uuid4())),
+            id=chunk_id,
             document_id=metadata.pop("file_id", ""),
             text=doc.page_content,
             partition=metadata.pop("partition", "default"),
             page_number=metadata.pop("page", None),
-            chunk_type=ChunkType(metadata.pop("chunk_type", "text")),
+            chunk_type=_coerce_chunk_type(metadata.pop("chunk_type", "text")),
             metadata=metadata,
         )
 
