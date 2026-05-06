@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openrag.core.prompts.query_rewriter import (
+from core.prompts.query_rewriter import (
     MULTI_QUERY_SEPARATOR,
     build_hyde_prompt,
     build_multi_query_prompt,

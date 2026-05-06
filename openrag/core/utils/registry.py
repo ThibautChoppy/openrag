@@ -17,9 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
-class RegistryError(Exception):
-    """Raised when a registry lookup fails."""
+from core.utils.exceptions import RegistryError as RegistryError  # noqa: F401
 
 
 class Registry[T]:

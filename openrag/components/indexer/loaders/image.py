@@ -17,6 +17,7 @@ from pathlib import Path
 from core.indexing.parsers.image_parser import ImageParser
 from core.models.document import Document as CoreDocument
 from core.models.document import DocumentType
+from core.utils.exceptions import OpenRAGError
 from langchain_core.documents import Document
 from PIL import Image
 from utils.logger import get_logger
@@ -26,8 +27,11 @@ from .base import BaseLoader
 log = get_logger()
 
 
-class ImageLoadError(Exception):
+class ImageLoadError(OpenRAGError):
     """Raised when an image file cannot be loaded or converted."""
+
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, code="IMAGE_LOAD_ERROR", status_code=500, **kwargs)
 
 
 class ImageLoader(BaseLoader):
@@ -60,12 +64,18 @@ class ImageLoader(BaseLoader):
             raw_bytes=raw_bytes,
             metadata=metadata,
         )
-        processed = await self._parser.parse(core_doc)
-        if not processed.images:
-            raise ImageLoadError(f"Cannot load image '{path.name}': failed to decode")
+        try:
+            processed = await self._parser.parse(core_doc)
+            if not processed.images or not processed.images[0].image_bytes:
+                raise ImageLoadError(f"Cannot load image '{path.name}': failed to decode")
 
-        img = Image.open(BytesIO(processed.images[0].image_bytes))
-        img.load()
+            img = Image.open(BytesIO(processed.images[0].image_bytes))
+            img.load()
+        except ImageLoadError:
+            raise
+        except Exception as e:
+            log.error("Failed to decode image file", file_path=str(path), error_type=type(e).__name__, error=str(e))
+            raise ImageLoadError(f"Cannot load image '{path.name}': {type(e).__name__}") from e
         description = await self.get_image_description(image_data=img)
 
         doc = Document(page_content=description, metadata=metadata)

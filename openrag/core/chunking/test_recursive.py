@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from openrag.core.chunking.recursive import RecursiveSplitter
-from openrag.core.chunking.registry import chunking_registry
-from openrag.core.models.chunk import ChunkType
-from openrag.core.models.document import ProcessedDocument, TextBlock
+from core.chunking.recursive import RecursiveSplitter
+from core.chunking.registry import chunking_registry
+from core.models.chunk import ChunkType
+from core.models.document import ProcessedDocument, TextBlock
 
 
 def _word_tokens(text: str) -> int:
@@ -155,7 +155,7 @@ def test_recursive_splitter_returns_empty_when_only_image_placeholder():
 def test_base_chunker_lazy_initializes_text_splitter():
     """A BaseChunker subclass that forgets to set self.text_splitter still
     works — split_text lazy-builds a default RecursiveCharacterTextSplitter."""
-    from openrag.core.chunking.recursive import BaseChunker
+    from core.chunking.recursive import BaseChunker
 
     class BareChunker(BaseChunker):
         pass

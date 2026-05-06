@@ -6,7 +6,7 @@ preserved through the move into core/.
 
 from __future__ import annotations
 
-from openrag.core.chunking.markdown_utils import (
+from core.chunking.markdown_utils import (
     MDElement,
     chunk_table,
     get_chunk_page_number,

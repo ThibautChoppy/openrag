@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from openrag.core.prompts.template_loader import load_template, load_template_by_key
+from core.prompts.template_loader import load_template, load_template_by_key
 
 
 def test_load_template_reads_file_contents(tmp_path: Path):

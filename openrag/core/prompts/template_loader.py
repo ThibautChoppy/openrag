@@ -24,7 +24,10 @@ def load_template(prompts_dir: str | Path, file_name: str) -> str:
     Raises:
         FileNotFoundError: if the resolved path does not exist.
     """
-    file_path = Path(prompts_dir) / file_name
+    base = Path(prompts_dir).resolve()
+    file_path = (base / file_name).resolve()
+    if not file_path.is_relative_to(base):
+        raise ValueError(f"Prompt path escapes base directory: `{file_name}`")
     if not file_path.exists():
         raise FileNotFoundError(f"Prompt file not found: `{file_path}`")
     return file_path.read_text(encoding="utf-8")

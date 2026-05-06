@@ -32,8 +32,6 @@ from .query_rewriter import (
 )
 from .template_loader import load_template, load_template_by_key
 from .vlm_prompt_builder import (
-    IMAGE_DESCRIPTION_CLOSE,
-    IMAGE_DESCRIPTION_OPEN,
     build_caption_messages,
     wrap_caption,
 )
@@ -67,6 +65,4 @@ __all__ = [
     # VLM
     "build_caption_messages",
     "wrap_caption",
-    "IMAGE_DESCRIPTION_OPEN",
-    "IMAGE_DESCRIPTION_CLOSE",
 ]

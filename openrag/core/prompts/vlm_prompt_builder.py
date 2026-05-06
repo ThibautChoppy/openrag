@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-IMAGE_DESCRIPTION_OPEN = "<image_description>"
-IMAGE_DESCRIPTION_CLOSE = "</image_description>"
+from core.utils.conts import IMG_WRAPPER_CLOSE, IMG_WRAPPER_OPEN
 
 
 def build_caption_messages(template: str, image_url: str) -> list[dict[str, Any]]:
@@ -41,4 +40,4 @@ def wrap_caption(caption: str) -> str:
     Pipelines downstream (markdown image replacement, chunk parsing) look for
     this exact marker, so the wrapping format is part of the contract.
     """
-    return f"{IMAGE_DESCRIPTION_OPEN}\n\n{caption}\n\n{IMAGE_DESCRIPTION_CLOSE}"
+    return f"{IMG_WRAPPER_OPEN}\n\n{caption}\n\n{IMG_WRAPPER_CLOSE}"

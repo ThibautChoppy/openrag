@@ -18,28 +18,20 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
+from tqdm.asyncio import tqdm
+
 from ..llm import LLM
 from ..models.chunk import Chunk
+from ..prompts.contextualization_builder import build_messages, wrap_chunk_with_context
 
 logger = logging.getLogger(__name__)
-
-
-BASE_CHUNK_FORMAT = "* filename: {filename}\n\n[CHUNK_START]\n\n{content}\n\n[CHUNK_END]"
-CHUNK_FORMAT = "[CONTEXT]\n\n{chunk_context}\n\n" + BASE_CHUNK_FORMAT
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_CONCURRENT = 4
 
 
-def format_chunk(content: str, filename: str, chunk_context: str | None = None) -> str:
-    """Render the canonical chunk wrapping (with or without context)."""
-    if chunk_context:
-        return CHUNK_FORMAT.format(content=content, filename=filename, chunk_context=chunk_context)
-    return BASE_CHUNK_FORMAT.format(content=content, filename=filename)
-
-
 class ChunkContextualizer:
-    """Generate a per-chunk context string and prepend it to the chunk text."""
+    """Generate a per-chunk context string and prepend it to the chunk text.."""
 
     def __init__(
         self,
@@ -54,7 +46,7 @@ class ChunkContextualizer:
         self._system_prompt = system_prompt
         self._timeout = timeout_seconds
         self._batch_size = max(1, max_concurrent)
-        self._semaphore = semaphore or asyncio.Semaphore(max_concurrent)
+        self._semaphore = semaphore or asyncio.Semaphore(self._batch_size)
 
     async def _generate_context(
         self,
@@ -64,20 +56,14 @@ class ChunkContextualizer:
         filename: str,
         lang: str,
     ) -> str:
-        first_block = "\n--\n".join(c.text for c in first_chunks)
-        prev_block = "\n--\n".join(c.text for c in prev_chunks)
-        user_msg = (
-            "Here is the context to consider for generating the context:\n"
-            f"- Filename: {filename}\n"
-            f"- First chunks:\n{first_block}\n\n"
-            f"- Previous chunks:\n{prev_block}\n\n"
-            f"Here is the current chunk to contextualize strictly in this {lang} language:\n"
-            f"- Current chunk:\n\n{current_chunk.text}"
+        messages = build_messages(
+            system_prompt=self._system_prompt,
+            filename=filename,
+            first_chunks_text=[c.text for c in first_chunks],
+            prev_chunks_text=[c.text for c in prev_chunks],
+            current_chunk_text=current_chunk.text,
+            lang=lang,
         )
-        messages = [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": user_msg},
-        ]
         async with self._semaphore:
             try:
                 return await asyncio.wait_for(self._llm.chat(messages), timeout=self._timeout)
@@ -126,12 +112,17 @@ class ChunkContextualizer:
                     )
                     for i in range(start, end)
                 ]
-                contexts.extend(await asyncio.gather(*batch))
+                contexts.extend(
+                    await tqdm.gather(
+                        *batch,
+                        desc=f"Contextualizing chunks of *{filename}* [{start + 1}-{end}/{len(chunks)}]",
+                    )
+                )
 
             return [
                 chunk.model_copy(
                     update={
-                        "text": format_chunk(
+                        "text": wrap_chunk_with_context(
                             content=chunk.text,
                             filename=filename,
                             chunk_context=context,
@@ -142,6 +133,6 @@ class ChunkContextualizer:
                 )
                 for chunk, context in zip(chunks, contexts, strict=True)
             ]
-        except Exception as exc:
+        except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
             logger.warning("Error contextualizing chunks from %s: %s", filename, exc)
             return chunks

@@ -15,17 +15,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from openrag.core.chunking.chunking_strategy import ChunkingStrategy
-from openrag.core.chunking.markdown_utils import (
+from core.chunking.chunking_strategy import ChunkingStrategy
+from core.chunking.markdown_utils import (
     MDElement,
     chunk_table,
     get_chunk_page_number,
     split_md_elements,
 )
-from openrag.core.chunking.registry import chunking_registry
-from openrag.core.models.chunk import Chunk, ChunkType
-from openrag.core.models.document import ProcessedDocument
-from openrag.core.utils.text import sanitize_text
+from core.chunking.registry import chunking_registry
+from core.models.chunk import Chunk, ChunkType
+from core.models.document import ProcessedDocument
+from core.utils.text import sanitize_text
 
 # Substring (case-insensitive) marking a "no useful content" image caption.
 # Detection logic mirrors the legacy chunker, which skips these elements so
@@ -116,13 +116,16 @@ class BaseChunker(ChunkingStrategy):
                 # block.page_number. Using `block.page_number - 1` (rather
                 # than `last_page`) handles non-sequential pages (1 -> 5)
                 # and a first block already on page > 1.
-                needs_marker = (index == 0 and block.page_number > 1) or (
-                    last_page is not None and block.page_number != last_page
+                needs_marker = (
+                    (index == 0 and block.page_number > 1)
+                    or (last_page is not None and block.page_number != last_page)
+                    or (last_page is None and index > 0)
                 )
                 if needs_marker:
                     parts.append(f"[PAGE_{block.page_number - 1}]")
             parts.append(block.text)
-            last_page = block.page_number
+            if block.page_number is not None:
+                last_page = block.page_number
         return "\n\n".join(parts)
 
     @staticmethod

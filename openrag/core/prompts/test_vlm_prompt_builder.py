@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from openrag.core.prompts.vlm_prompt_builder import (
-    IMAGE_DESCRIPTION_CLOSE,
-    IMAGE_DESCRIPTION_OPEN,
+from core.prompts.vlm_prompt_builder import (
     build_caption_messages,
     wrap_caption,
 )
+from core.utils.conts import IMG_WRAPPER_CLOSE, IMG_WRAPPER_OPEN
 
 
 def test_build_caption_messages_shapes_for_openai_multimodal():
@@ -31,8 +30,8 @@ def test_build_caption_messages_supports_data_uri():
 
 def test_wrap_caption_uses_image_description_markers():
     out = wrap_caption("a sunset over the sea")
-    assert out.startswith(IMAGE_DESCRIPTION_OPEN)
-    assert out.endswith(IMAGE_DESCRIPTION_CLOSE)
+    assert out.startswith(IMG_WRAPPER_OPEN)
+    assert out.endswith(IMG_WRAPPER_CLOSE)
     assert "a sunset over the sea" in out
 
 
@@ -40,5 +39,5 @@ def test_wrap_caption_format_is_load_bearing_for_chunker():
     """The chunker's image-element regex matches `<image_description>...</image_description>`,
     so this exact pairing is part of the contract."""
     out = wrap_caption("x")
-    assert "<image_description>" in out
-    assert "</image_description>" in out
+    assert IMG_WRAPPER_OPEN in out
+    assert IMG_WRAPPER_CLOSE in out

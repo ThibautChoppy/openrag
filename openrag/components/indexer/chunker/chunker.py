@@ -1,22 +1,12 @@
 """Backward-compatibility shim — chunking primitives delegate to `openrag.core.chunking`.
 
-Phase 5B/5.15 status:
-
-* `BaseChunker._get_chunks` / `_prepare_md_elements` / `split_text` →
-  delegated to a held `core.chunking.recursive.RecursiveSplitter` instance
-  via a `Document` ↔ `ProcessedDocument` ↔ `Chunk` adapter.
-* `ChunkContextualizer` and the `split_document()` orchestration sit
-  outside Phase 5B (they belong to 5D / Phase 8). They stay here until
-  Phase 5D ships `core/indexing/contextualize.py`.
-* `ChunkerFactory` is config-driven; the new code uses
-  `chunking_registry`. Both coexist until Phase 8 cutover.
+`ChunkerFactory` is config-driven; the new code uses `chunking_registry`. Both
+coexist until Phase 8 cutover.
 
 Scheduled for removal in Phase 12.
 """
 
-from typing import Literal
-
-import openai
+from typing import ClassVar, Literal
 
 # Side-effect import: pre-loads the indexer-utils submodule so the legacy
 # circular import between `components.utils` and `components.indexer.utils.files`
@@ -25,14 +15,16 @@ import openai
 from components.indexer.utils import text_sanitizer as _text_sanitizer  # noqa: F401
 from components.prompts import CHUNK_CONTEXTUALIZER_PROMPT
 from components.utils import detect_language, get_vlm_semaphore, load_config
+from core.chunking.recursive import RecursiveSplitter as _CoreRecursiveSplitter
+from core.indexing.contextualize import ChunkContextualizer as _CoreChunkContextualizer
+from core.llm.llm import LLM as _CoreLLM
+from core.models.chunk import Chunk as _CoreChunk
+from core.models.document import ProcessedDocument, TextBlock
+from core.prompts.contextualization_builder import wrap_chunk_with_context
 from langchain_core.documents.base import Document
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from tqdm.asyncio import tqdm
 from utils.logger import get_logger
-
-from openrag.core.chunking.recursive import RecursiveSplitter as _CoreRecursiveSplitter
-from openrag.core.models.document import ProcessedDocument, TextBlock
 
 from ..embeddings import BaseEmbedding
 
@@ -42,119 +34,23 @@ config = load_config()
 CONTEXTUALIZATION_TIMEOUT = config.chunker.contextualization_timeout
 MAX_CONCURRENT_CONTEXTUALIZATION = config.chunker.max_concurrent_contextualization
 
-BASE_CHUNK_FORMAT = "* filename: {filename}\n\n[CHUNK_START]\n\n{content}\n\n[CHUNK_END]"
-CHUNK_FORMAT = "[CONTEXT]\n\n{chunk_context}\n\n" + BASE_CHUNK_FORMAT
 
+class _LangChainLLMAdapter(_CoreLLM):
+    """Wraps a LangChain ``ChatOpenAI`` so it satisfies the core ``LLM`` ABC."""
 
-class ChunkContextualizer:
-    """Handles contextualization of document chunks.
+    _ROLE_MAP: ClassVar[dict] = {"user": HumanMessage, "system": SystemMessage, "assistant": AIMessage}
 
-    Stays in `components/` until Phase 5D moves the orchestration into
-    `core/indexing/contextualize.py`. The pure prompt-builders for the
-    LLM call already live at `core.prompts.contextualization_builder`.
-    """
+    def __init__(self, lc_llm: ChatOpenAI) -> None:
+        self._llm = lc_llm
 
-    def __init__(self, llm_config: dict):
-        llm_config: dict = dict(llm_config)
-        llm_config.update({"timeout": CONTEXTUALIZATION_TIMEOUT})
-        self.context_generator = ChatOpenAI(**llm_config)
+    async def generate(self, prompt: str, **kwargs) -> str:
+        out = await self._llm.ainvoke(prompt)
+        return out.content if hasattr(out, "content") else str(out)
 
-    async def _generate_context(
-        self,
-        first_chunks: list[Document],
-        prev_chunks: list[Document],
-        current_chunk: Document,
-        lang: Literal["fr", "en"] = "en",
-    ) -> str:
-        """Generate context for a given chunk of text."""
-        filename = first_chunks[0].metadata.get("source", "unknown")
-
-        user_msg = f"""
-        Here is the context to consider for generating the context:
-        - Filename: {filename}
-        - First chunks:
-        {"\n--\n".join(c.page_content for c in first_chunks)}
-
-        - Previous chunks:
-        {"\n--\n".join(c.page_content for c in prev_chunks)}
-
-        Here is the current chunk to contextualize strictly in this {lang} language:
-        - Current chunk:
-
-        {current_chunk.page_content}
-        """
-        async with get_vlm_semaphore():
-            try:
-                messages = [
-                    SystemMessage(content=CHUNK_CONTEXTUALIZER_PROMPT),
-                    HumanMessage(content=user_msg),
-                ]
-                output = await self.context_generator.ainvoke(messages)
-                return output.content
-            except openai.APITimeoutError:
-                logger.warning(
-                    f"OpenAI API timeout contextualizing chunk after {CONTEXTUALIZATION_TIMEOUT}s",
-                    filename=filename,
-                )
-                return ""
-            except Exception as e:
-                logger.warning(
-                    "Error contextualizing chunk of document",
-                    filename=filename,
-                    error=str(e),
-                )
-                return ""
-
-    async def contextualize_chunks(
-        self,
-        chunks: list[Document],
-        lang: Literal["fr", "en"] = "en",
-        filename: str = "",
-    ) -> list[Document]:
-        """Contextualize a list of document chunks.
-
-        Processes chunks in batches to prevent overwhelming the system with
-        too many concurrent LLM requests.
-        """
-        try:
-            first_chunks = chunks[:2]
-            contexts = []
-            batch_size = MAX_CONCURRENT_CONTEXTUALIZATION
-
-            for batch_start in range(0, len(chunks), batch_size):
-                batch_end = min(batch_start + batch_size, len(chunks))
-                batch_tasks = [
-                    self._generate_context(
-                        first_chunks=first_chunks,
-                        prev_chunks=chunks[max(0, i - 2) : i] if i > 0 else [],
-                        current_chunk=chunks[i],
-                        lang=lang,
-                    )
-                    for i in range(batch_start, batch_end)
-                ]
-
-                batch_contexts = await tqdm.gather(
-                    *batch_tasks,
-                    total=len(batch_tasks),
-                    desc=f"Contextualizing chunks of *{filename}* [{batch_start + 1}-{batch_end}/{len(chunks)}]",
-                )
-                contexts.extend(batch_contexts)
-
-            return [
-                Document(
-                    page_content=CHUNK_FORMAT.format(
-                        content=chunk.page_content,
-                        chunk_context=context,
-                        filename=filename,
-                    ),
-                    metadata=chunk.metadata,
-                )
-                for chunk, context in zip(chunks, contexts, strict=True)
-            ]
-
-        except Exception as e:
-            logger.warning(f"Error contextualizing chunks from `{filename}`: {e}")
-            return chunks
+    async def chat(self, messages: list[dict[str, str]], **kwargs) -> str:
+        lc_msgs = [self._ROLE_MAP[m["role"]](content=m["content"]) for m in messages]
+        out = await self._llm.ainvoke(lc_msgs)
+        return out.content
 
 
 def _chunks_to_documents(chunks: list, base_metadata: dict) -> list[Document]:
@@ -206,7 +102,17 @@ class BaseChunker:
         self._core_splitter: _CoreRecursiveSplitter | None = None
 
         self.contextual_retrieval = contextual_retrieval
-        self.contextualizer = ChunkContextualizer(llm_config) if contextual_retrieval else None
+        if contextual_retrieval:
+            _lc_llm = ChatOpenAI(**{**llm_config, "timeout": CONTEXTUALIZATION_TIMEOUT})
+            self.contextualizer: _CoreChunkContextualizer | None = _CoreChunkContextualizer(
+                llm=_LangChainLLMAdapter(_lc_llm),
+                system_prompt=CHUNK_CONTEXTUALIZER_PROMPT,
+                timeout_seconds=CONTEXTUALIZATION_TIMEOUT,
+                max_concurrent=MAX_CONCURRENT_CONTEXTUALIZATION,
+                semaphore=get_vlm_semaphore(),
+            )
+        else:
+            self.contextualizer = None
 
     async def _apply_contextualization(
         self,
@@ -218,13 +124,15 @@ class BaseChunker:
         if not self.contextual_retrieval or len(chunks) < 2:
             return [
                 Document(
-                    page_content=BASE_CHUNK_FORMAT.format(chunk_context="", filename=filename, content=c.page_content),
+                    page_content=wrap_chunk_with_context(c.page_content, filename),
                     metadata=c.metadata,
                 )
                 for c in chunks
             ]
 
-        return await self.contextualizer.contextualize_chunks(chunks, lang=lang, filename=filename)
+        core_chunks = [_CoreChunk.from_langchain(c) for c in chunks]
+        contextualized = await self.contextualizer.contextualize(core_chunks, filename=filename, lang=lang)
+        return [c.to_langchain(with_id=False) for c in contextualized]
 
     def _get_chunks(self, content: str, metadata: dict | None = None, log=None) -> list[Document]:
         log = log or logger

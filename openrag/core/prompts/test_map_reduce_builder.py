@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openrag.core.prompts.map_reduce_builder import (
+from core.prompts.map_reduce_builder import (
     SYSTEM_PROMPT_MAP,
     USER_PROMPT_TEMPLATE,
     build_map_messages,

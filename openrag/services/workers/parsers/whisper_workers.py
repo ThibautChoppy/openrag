@@ -14,7 +14,7 @@ from core.models.document import (
 from faster_whisper import WhisperModel
 from utils.logger import get_logger
 
-from ..ray_utils import call_ray_actor_with_timeout, with_retry, with_timeout
+from ..ray_utils import with_retry, with_timeout
 
 logger = get_logger()
 config = load_config()
@@ -26,6 +26,10 @@ else:  # On CPU
     WHISPER_NUM_GPUS = 0
 
 WHISPER_CONCURRENCY_PER_WORKER = config.loader.local_whisper.whisper_concurrency_per_worker
+
+
+# Duration of the audio sample used for language detection
+LANG_DETECT_SAMPLE_MS = 30_000  # 30 s
 
 
 @ray.remote(
@@ -57,20 +61,37 @@ class WhisperActor:
 
         return await asyncio.to_thread(_transcribe_sync)
 
-    async def detect_language(self, wav_path: str | Path, fallback_language="en") -> str:
-        try:
-            self.logger.info("Detecting language for audio file", file_path=Path(wav_path).name)
+    async def detect_language(
+        self,
+        file_path: str | Path,
+        fallback_language: str = "en",
+        sample_ms: int = LANG_DETECT_SAMPLE_MS,
+    ) -> str:
+        import tempfile
 
-            def _detect_language_sync() -> str:
-                # beam_size=1 + max_new_tokens=1 runs only language detection, no full transcription
-                _, info = self.model.transcribe(str(wav_path), beam_size=1, max_new_tokens=1)
+        from pydub import AudioSegment
+
+        file_path = Path(file_path)
+        self.logger.info("Detecting language for audio file", file_path=file_path.name)
+        fd, tmp_path = tempfile.mkstemp(prefix=f"{file_path.stem}_langdetect_", suffix=".wav")
+        try:
+
+            def _prepare_and_detect() -> str:
+                import os
+
+                os.close(fd)
+                sound = AudioSegment.from_file(file_path)
+                sample = sound[:sample_ms]
+                sample.export(tmp_path, format="wav")
+                _, info = self.model.transcribe(tmp_path, beam_size=1, max_new_tokens=1)
                 return info.language
 
-            return await asyncio.to_thread(_detect_language_sync)
-
-        except Exception as e:
-            self.logger.error("Error detecting language", error=str(e))
+            return await asyncio.to_thread(_prepare_and_detect)
+        except Exception:
+            self.logger.exception("Error detecting language", file_path=file_path.name)
             return fallback_language
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 @ray.remote
@@ -134,11 +155,7 @@ class LocalWhisperLoader(BasePooledParser):
 
         async with document.as_temporary_file() as path:
             try:
-                text = await call_ray_actor_with_timeout(
-                    self.whisper_actor.transcribe.remote(str(path)),
-                    timeout=config.loader.local_whisper.whisper_timeout,
-                    task_description=f"WhisperPool transcribe ({path})",
-                )
+                text = await ray.get(self.whisper_actor.transcribe.remote(str(path)))
             except Exception as e:
                 logger.error("Error transcribing audio", error=str(e))
                 raise

@@ -14,18 +14,18 @@ from components.ray_utils import call_ray_actor_with_timeout
 from components.utils import detect_language, format_context, format_web_context
 from components.websearch import WebSearchFactory
 from config import load_config
+
+# Phase 5/5.15: domain query model + RetrieverPipeline live in core/. This file
+# re-exports them and shims the legacy RetrieverPipeline as an adapter.
+from core.models.chunk import Chunk
+from core.models.query import Query, SearchQueries, TemporalPredicate
+from core.rerankers.reranker import Reranker as _CoreReranker
+from core.retrieval.pipeline import RetrieverPipeline as _CoreRetrieverPipeline
 from langchain_core.documents.base import Document
 from langchain_core.exceptions import OutputParserException
 from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 from utils.logger import get_logger
-
-# Phase 5/5.15: domain query model + RetrieverPipeline live in core/. This file
-# re-exports them and shims the legacy RetrieverPipeline as an adapter.
-from openrag.core.models.chunk import Chunk
-from openrag.core.models.query import Query, SearchQueries, TemporalPredicate
-from openrag.core.rerankers.reranker import Reranker as _CoreReranker
-from openrag.core.retrieval.pipeline import RetrieverPipeline as _CoreRetrieverPipeline
 
 from .llm import LLM
 from .map_reduce import RAGMapReduce

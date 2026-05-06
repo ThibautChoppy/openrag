@@ -17,19 +17,22 @@ strategy doc's "every factory becomes a Registry" rule.
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from itertools import chain as ichain
 from typing import Any
 
-from openrag.core.llm.llm import LLM
-from openrag.core.models.chunk import Chunk
-from openrag.core.prompts.query_rewriter import (
+from core.llm.llm import LLM
+from core.models.chunk import Chunk
+from core.prompts.query_rewriter import (
     build_hyde_prompt,
     build_multi_query_prompt,
     split_multi_query_response,
 )
-from openrag.core.retrieval.searcher import RetrievalSearcher
-from openrag.core.utils.registry import Registry
+from core.retrieval.searcher import RetrievalSearcher
+from core.utils.registry import Registry
+
+logger = logging.getLogger(__name__)
 
 
 class Retriever(ABC):
@@ -238,6 +241,7 @@ async def _expand_with_related_chunks(
         try:
             return await searcher.get_related_chunks(partition=part, relationship_id=rel_id, limit=related_limit)
         except Exception:
+            logger.warning("get_related_chunks failed (partition=%s, relationship_id=%s)", part, rel_id, exc_info=True)
             return []
 
     async def _safe_ancestors(part: str, file_id: str) -> list[Chunk]:
@@ -249,6 +253,7 @@ async def _expand_with_related_chunks(
                 max_ancestor_depth=max_ancestor_depth,
             )
         except Exception:
+            logger.warning("get_ancestor_chunks failed (partition=%s, file_id=%s)", part, file_id, exc_info=True)
             return []
 
     tasks: list[asyncio.Future] = []

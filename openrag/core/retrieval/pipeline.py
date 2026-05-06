@@ -22,11 +22,11 @@ import asyncio
 import copy
 from typing import Any
 
-from openrag.core.models.chunk import Chunk
-from openrag.core.models.query import Query, SearchQueries
-from openrag.core.rerankers.reranker import Reranker
-from openrag.core.retrieval.retriever import Retriever
-from openrag.core.retrieval.rrf import rrf_reranking
+from core.models.chunk import Chunk
+from core.models.query import Query, SearchQueries
+from core.rerankers.reranker import Reranker
+from core.retrieval.retriever import Retriever
+from core.retrieval.rrf import rrf_reranking
 
 
 def _chunk_key(c: Chunk) -> Any:

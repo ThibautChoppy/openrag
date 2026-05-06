@@ -6,7 +6,7 @@ so existing legacy imports keep working until the consumers migrate;
 scheduled for removal in Phase 12.
 """
 
-from openrag.core.chunking.markdown_utils import (
+from core.chunking.markdown_utils import (
     IMAGE_RE,
     PAGE_RE,
     TABLE_RE,

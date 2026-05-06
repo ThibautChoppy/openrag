@@ -39,15 +39,18 @@ def validate_file_id(
     file_id: str,
     forbidden_chars: Iterable[str] = DEFAULT_FORBIDDEN_CHARS_IN_FILE_ID,
 ) -> str:
-    """Return ``file_id`` if valid, else raise ``ValidationError`` (HTTP 400)."""
+    """Return normalized ``file_id`` if valid, else raise ``ValidationError`` (HTTP 400)."""
+    if not isinstance(file_id, str):
+        raise ValidationError("File ID must be a string.", status_code=400)
+    file_id = file_id.strip()
+    if not file_id:
+        raise ValidationError("File ID cannot be empty.", status_code=400)
     forbidden = frozenset(forbidden_chars)
     if any(c in file_id for c in forbidden):
         raise ValidationError(
             f"File ID contains forbidden characters: {', '.join(sorted(forbidden))}",
             status_code=400,
         )
-    if not file_id.strip():
-        raise ValidationError("File ID cannot be empty.", status_code=400)
     return file_id
 
 

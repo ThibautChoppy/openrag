@@ -104,7 +104,7 @@ def format_context(
     length_function. We adapt by extracting page_content and threading
     the cached tokenizer through.
     """
-    from openrag.core.prompts.chat_prompt_builder import format_context as _core_format_context
+    from core.prompts.chat_prompt_builder import format_context as _core_format_context
 
     texts = [doc.page_content for doc in docs]
     text, included = _core_format_context(
@@ -127,7 +127,7 @@ def format_web_context(
     Same adaptation pattern as `format_context`: legacy resolved the
     tokenizer internally, core takes it as a parameter.
     """
-    from openrag.core.prompts.chat_prompt_builder import format_web_context as _core_format_web_context
+    from core.prompts.chat_prompt_builder import format_web_context as _core_format_web_context
 
     text, source_numbers, total_tokens = _core_format_web_context(
         web_results,

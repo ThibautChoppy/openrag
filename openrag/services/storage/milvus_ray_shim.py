@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from openrag.core.models.chunk import Chunk
-from openrag.core.retrieval.searcher import RetrievalSearcher
+from core.models.chunk import Chunk
+from core.retrieval.searcher import RetrievalSearcher
 
 # Match the legacy default in `components.pipeline` (config.ray.indexer.vectordb_timeout).
 # The composition root can override via ``MilvusRayShim(actor, timeout=...)``.
@@ -48,9 +48,7 @@ class MilvusRayShim(RetrievalSearcher):
         self._timeout = timeout
 
     async def _call(self, future: Any, task_description: str) -> Any:
-        # Deferred import: keeps this module importable without `ray` installed
-        # (legacy `components.ray_utils` pulls in ray at import time).
-        from openrag.components.ray_utils import call_ray_actor_with_timeout
+        from services.workers.ray_utils import call_ray_actor_with_timeout
 
         return await call_ray_actor_with_timeout(
             future=future,

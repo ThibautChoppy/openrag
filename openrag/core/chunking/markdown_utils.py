@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from openrag.core.utils.text import clean_markdown_table_spacing
+from core.utils.text import clean_markdown_table_spacing
 
 # Header + delimiter + at least one row.
 TABLE_RE = re.compile(
@@ -140,7 +140,7 @@ def get_chunk_page_number(chunk_str: str, previous_chunk_ending_page: int = 1) -
     else:
         end_page = int(last_match.group(1)) + 1
 
-    return {"start_page": start_page, "end_page": end_page}
+    return {"start_page": start_page, "end_page": max(start_page, end_page)}
 
 
 def parse_markdown_table(markdown_table: str) -> tuple[list[str], list[list[str]]]:

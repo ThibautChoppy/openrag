@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from openrag.core.models.chunk import Chunk
+from core.models.chunk import Chunk
 
 
 class RetrievalSearcher(ABC):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openrag.core.config.indexation import (
+from core.config.indexation import (
     _DEFAULT_DIRECT_UPLOAD_SUFFIXES,
     TranscriberConfig,
 )

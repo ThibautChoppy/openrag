@@ -21,7 +21,7 @@ import copy
 from collections.abc import Callable
 from typing import Protocol
 
-from openrag.core.utils.text import sanitize_text
+from core.utils.text import sanitize_text
 
 SOURCE_SEPARATOR = "-" * 10 + "\n\n"
 EMPTY_CONTEXT_MESSAGE = "No document found from the database"
@@ -112,7 +112,7 @@ def format_web_context(
         body = sanitize_text(body_raw) if body_raw else ""
         block = f"[Source {n}]\n{title}\n{body}"
         block_tokens = length_function(block)
-        if total_tokens + block_tokens > max_tokens and parts:
+        if total_tokens + block_tokens > max_tokens:
             break
         parts.append(block)
         source_numbers.append(n)

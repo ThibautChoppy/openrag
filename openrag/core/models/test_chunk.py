@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from core.models.chunk import Chunk, ChunkType, _coerce_chunk_type
 from langchain_core.documents.base import Document
-
-from openrag.core.models.chunk import Chunk, ChunkType, _coerce_chunk_type
 
 
 def test_from_langchain_maps_legacy_image_chunk_type():

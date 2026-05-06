@@ -16,45 +16,42 @@ legacy loader-discovery path alive until consumers migrate.
 import asyncio
 from pathlib import Path
 
+from config import load_config
 from core.indexing.parsers.audio.client_based import ClientAudioParser
 from core.models.document import Document as CoreDocument
 from core.models.document import DocumentType
 from langchain_core.documents.base import Document
-from pydub import AudioSegment
 from services.inference.parsers.openai_audio import OpenAIAudioClient
+from services.workers.ray_utils import call_ray_actor_with_timeout
 from utils.logger import get_logger
 
 from ..base import BaseLoader
 from .local_whisper import WhisperActor
 
 logger = get_logger()
-
-# Duration of the audio sample used for language detection
-LANG_DETECT_SAMPLE_MS = 30_000  # 30 s
+_config = load_config()
 
 
 def _get_whisper_actor():
     try:
         return WhisperActor.options(name="WhisperActor", namespace="openrag", get_if_exists=True).remote()
-    except Exception as e:
-        logger.error("Error getting WhisperActor", error=str(e))
+    except Exception:
+        logger.exception("Error getting WhisperActor")
         raise
 
 
 async def _whisper_language_detector(file_path: Path) -> str | None:
-    """Detect language via the singleton ``WhisperActor`` from a short audio sample."""
-    sound = await asyncio.to_thread(AudioSegment.from_file, file_path)
-    sample = sound[:LANG_DETECT_SAMPLE_MS]
-    tmp_path = file_path.parent / f"{file_path.stem}_langdetect.wav"
-    await asyncio.to_thread(sample.export, tmp_path, format="wav")
+    """Detect language via the singleton ``WhisperActor``."""
     try:
         whisper_actor = _get_whisper_actor()
-        return await whisper_actor.detect_language.remote(tmp_path, "en")
-    except Exception as e:
-        logger.exception("Language detection failed", error=str(e))
+        return await call_ray_actor_with_timeout(
+            whisper_actor.detect_language.remote(file_path, "en"),
+            timeout=_config.loader.local_whisper.whisper_timeout,
+            task_description=f"WhisperActor detect_language ({file_path.name})",
+        )
+    except Exception:
+        logger.exception("Language detection failed", file_path=str(file_path))
         return None
-    finally:
-        await asyncio.to_thread(tmp_path.unlink, True)
 
 
 class OpenAIAudioLoader(BaseLoader):
@@ -89,7 +86,7 @@ class OpenAIAudioLoader(BaseLoader):
         except Exception:
             logger.exception("Error in OpenAIAudioLoader", path=str(file_path))
             raise
-        content = "".join(b.text for b in processed.text_blocks)
+        content = "\n\n".join(b.text for b in processed.text_blocks)
         doc = Document(page_content=content, metadata=metadata)
         if save_markdown:
             self.save_content(content, str(file_path))

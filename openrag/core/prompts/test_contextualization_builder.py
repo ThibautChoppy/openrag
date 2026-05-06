@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openrag.core.prompts.contextualization_builder import (
+from core.prompts.contextualization_builder import (
     BASE_CHUNK_FORMAT,
     CHUNK_FORMAT,
     build_messages,

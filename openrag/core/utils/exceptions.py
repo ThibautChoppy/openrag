@@ -112,17 +112,15 @@ class PipelineError(OpenRAGError):
 class AuthError(OpenRAGError):
     """Authentication / authorization errors."""
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, code="AUTH_ERROR", status_code=403, **kwargs)
+    def __init__(self, message: str, *, code: str = "AUTH_ERROR", status_code: int = 403, **kwargs):
+        super().__init__(message, code=code, status_code=status_code, **kwargs)
 
 
 class AuthenticationError(AuthError):
     """Missing or invalid credentials. Maps to HTTP 401."""
 
     def __init__(self, message: str, **kwargs):
-        super().__init__(message, **kwargs)
-        self.code = "AUTHENTICATION_ERROR"
-        self.status_code = 401
+        super().__init__(message, code="AUTHENTICATION_ERROR", status_code=401, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +187,8 @@ class QuotaExceededError(OpenRAGError):
 class ServiceUnavailableError(OpenRAGError):
     """External service unavailable after retry exhaustion. Maps to HTTP 503."""
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, code="SERVICE_UNAVAILABLE", status_code=503, **kwargs)
+    def __init__(self, message: str, *, code: str = "SERVICE_UNAVAILABLE", status_code: int = 503, **kwargs):
+        super().__init__(message, code=code, status_code=status_code, **kwargs)
 
 
 class CircuitBreakerOpenError(ServiceUnavailableError):
@@ -200,9 +198,9 @@ class CircuitBreakerOpenError(ServiceUnavailableError):
         self.service_type = service_type
         super().__init__(
             f"Circuit breaker open for {service_type} — service unavailable",
+            code="CIRCUIT_BREAKER_OPEN",
             **kwargs,
         )
-        self.code = "CIRCUIT_BREAKER_OPEN"
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +211,8 @@ class CircuitBreakerOpenError(ServiceUnavailableError):
 class InferenceError(OpenRAGError):
     """Base for all inference service failures. Maps to HTTP 503."""
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, code="INFERENCE_ERROR", status_code=503, **kwargs)
+    def __init__(self, message: str, *, code: str = "INFERENCE_ERROR", status_code: int = 503, **kwargs):
+        super().__init__(message, code=code, status_code=status_code, **kwargs)
 
 
 class LLMParsingError(InferenceError):
@@ -225,27 +223,24 @@ class LLMParsingError(InferenceError):
         self.parse_error = parse_error
         super().__init__(
             f"LLM returned invalid JSON: {self.raw_response[:100]}...",
+            code="LLM_PARSING_ERROR",
+            status_code=502,
             **kwargs,
         )
-        self.code = "LLM_PARSING_ERROR"
-        self.status_code = 502
 
 
 class InferenceTimeoutError(InferenceError):
     """Inference request timed out. Maps to HTTP 504."""
 
     def __init__(self, message: str, **kwargs):
-        super().__init__(message, **kwargs)
-        self.code = "INFERENCE_TIMEOUT"
-        self.status_code = 504
+        super().__init__(message, code="INFERENCE_TIMEOUT", status_code=504, **kwargs)
 
 
 class InferenceConnectionError(InferenceError):
     """Cannot reach inference service. Maps to HTTP 503."""
 
     def __init__(self, message: str, **kwargs):
-        super().__init__(message, **kwargs)
-        self.code = "INFERENCE_CONNECTION_ERROR"
+        super().__init__(message, code="INFERENCE_CONNECTION_ERROR", **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -256,24 +251,22 @@ class InferenceConnectionError(InferenceError):
 class StorageError(OpenRAGError):
     """Base for storage failures. Maps to HTTP 500."""
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, code="STORAGE_ERROR", status_code=500, **kwargs)
+    def __init__(self, message: str, *, code: str = "STORAGE_ERROR", status_code: int = 500, **kwargs):
+        super().__init__(message, code=code, status_code=status_code, **kwargs)
 
 
 class MilvusError(StorageError):
     """Milvus-specific failures."""
 
     def __init__(self, message: str, **kwargs):
-        super().__init__(message, **kwargs)
-        self.code = "MILVUS_ERROR"
+        super().__init__(message, code="MILVUS_ERROR", **kwargs)
 
 
 class PostgresError(StorageError):
     """Postgres-specific failures."""
 
     def __init__(self, message: str, **kwargs):
-        super().__init__(message, **kwargs)
-        self.code = "POSTGRES_ERROR"
+        super().__init__(message, code="POSTGRES_ERROR", **kwargs)
 
 
 # ---------------------------------------------------------------------------

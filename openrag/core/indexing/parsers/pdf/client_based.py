@@ -12,6 +12,8 @@ be swapped in without changing this facade.
 
 from __future__ import annotations
 
+from core.utils.exceptions import ValidationError
+
 from ....models.document import Document, ProcessedDocument
 from ..document_parser import BaseClientParser, DocumentParser
 from ..registry import parser_registry
@@ -23,7 +25,7 @@ class ClientPdfParser(DocumentParser):
 
     def __init__(self, client: BaseClientParser) -> None:
         if not isinstance(client, BaseClientParser):
-            raise ValueError("ClientPdfParser requires a BaseClientParser instance as client")
+            raise ValidationError("ClientPdfParser requires a BaseClientParser instance as client")
         self._client = client
 
     def supported_types(self) -> list[str]:

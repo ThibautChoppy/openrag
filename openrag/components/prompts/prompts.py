@@ -14,8 +14,7 @@ config, matching the legacy call site shape.
 from pathlib import Path
 
 from config import load_config
-
-from openrag.core.prompts.template_loader import load_template_by_key
+from core.prompts.template_loader import load_template_by_key
 
 config = load_config()
 

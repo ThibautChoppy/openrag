@@ -405,7 +405,7 @@ class MarkerLoader(BasePooledParser):
             try:
                 png_bytes = pil_to_png_bytes(pil_image)
             except Exception as exc:
-                logger.warning("Failed to encode Marker image %s: %s", key, exc)
+                logger.warning(f"Failed to encode Marker image {key}: {exc}")
                 continue
             blocks.append(
                 ImageBlock(

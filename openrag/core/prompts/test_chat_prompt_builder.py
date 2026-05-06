@@ -33,7 +33,7 @@ def test_format_context_numbers_sources_and_separates():
 
 def test_format_context_drops_to_fit_budget():
     docs = ["one two", "three four five", "six"]
-    # _word_tokens("[Source 1]\n") = 1, doc1 = 2, prefix2 = 1, doc2 = 3 -> total 7
+    # _word_tokens("[Source 1]\n") = 2, doc1 = 2, sep = 1, prefix2 = 2, doc2 = 3 -> total 10
     text, included = format_context(docs, max_context_tokens=4, length_function=_word_tokens)
     assert "[Source 1]" in text
     assert "[Source 2]" not in text

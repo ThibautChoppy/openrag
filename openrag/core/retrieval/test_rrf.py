@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from openrag.core.retrieval.rrf import rrf_reranking
+from core.retrieval.rrf import rrf_reranking
 
 
 def test_rrf_empty_returns_empty():

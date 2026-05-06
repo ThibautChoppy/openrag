@@ -80,19 +80,25 @@ class Chunk(BaseModel):
             metadata=metadata,
         )
 
-    def to_langchain(self) -> Any:
+    def to_langchain(self, *, with_id: bool = True) -> Any:
         """Convert back to a LangChain Document.
 
         Import is deferred to method body so core/ stays pure at import time.
+
+        Args:
+            with_id: When True (default), stamp ``_id`` into metadata.
+                Pass False on the write path — ``_id`` is auto-assigned by
+                Milvus (auto_id=True) and must not appear in the insert payload.
         """
         from langchain_core.documents.base import Document
 
         metadata = {
             **self.metadata,
-            "_id": self.id,
             "file_id": self.document_id,
             "partition": self.partition,
             "page": self.page_number,
             "chunk_type": self.chunk_type.value,
         }
+        if with_id:
+            metadata["_id"] = self.id
         return Document(page_content=self.text, metadata=metadata)

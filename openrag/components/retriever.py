@@ -22,27 +22,26 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 from components.prompts import HYDE_PROMPT, MULTI_QUERY_PROMPT
+from core.llm.llm import LLM as _CoreLLM
+from core.models.chunk import Chunk
+from core.retrieval.retriever import (
+    HyDeRetriever as _CoreHyDeRetriever,
+)
+from core.retrieval.retriever import (
+    MultiQueryRetriever as _CoreMultiQueryRetriever,
+)
+from core.retrieval.retriever import (
+    SingleRetriever as _CoreSingleRetriever,
+)
+from core.retrieval.retriever import (
+    _expand_with_related_chunks as _core_expand,
+)
 from langchain_core.documents.base import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from services.storage.milvus_ray_shim import MilvusRayShim
 from utils.dependencies import get_vectordb
 from utils.logger import get_logger
-
-from openrag.core.llm.llm import LLM as _CoreLLM
-from openrag.core.models.chunk import Chunk
-from openrag.core.retrieval.retriever import (
-    HyDeRetriever as _CoreHyDeRetriever,
-)
-from openrag.core.retrieval.retriever import (
-    MultiQueryRetriever as _CoreMultiQueryRetriever,
-)
-from openrag.core.retrieval.retriever import (
-    SingleRetriever as _CoreSingleRetriever,
-)
-from openrag.core.retrieval.retriever import (
-    _expand_with_related_chunks as _core_expand,
-)
-from openrag.services.storage.milvus_ray_shim import MilvusRayShim
 
 logger = get_logger()
 
@@ -168,6 +167,8 @@ class BaseRetriever(ABCRetriever):
         return _to_documents(chunks)
 
     async def expand_search_results(self, results: list[Document]) -> list[Document]:
+        if not self.expansion_enabled or not results:
+            return results
         expanded = await _core_expand(
             searcher=_searcher(),
             results=_from_documents(results),
@@ -285,6 +286,8 @@ async def _expand_with_related_chunks(
     The legacy callers pass a Ray actor via ``db``; we wrap it in
     ``MilvusRayShim`` to satisfy the core ``RetrievalSearcher`` port.
     """
+    if not results or (not include_related and not include_ancestors):
+        return results
     expanded = await _core_expand(
         searcher=MilvusRayShim(db),
         results=_from_documents(results),

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import pytest
-
-from openrag.core.models.chunk import Chunk
-from openrag.core.models.query import Query, SearchQueries, TemporalPredicate
-from openrag.core.retrieval.pipeline import RetrieverPipeline
-from openrag.core.retrieval.retriever import Retriever
+from core.models.chunk import Chunk
+from core.models.query import Query, SearchQueries, TemporalPredicate
+from core.retrieval.pipeline import RetrieverPipeline
+from core.retrieval.retriever import Retriever
 
 
 class FakeRetriever(Retriever):
@@ -164,7 +163,7 @@ async def test_retrieve_docs_expansion_no_new_chunks_skips_second_rerank():
 @pytest.mark.asyncio
 async def test_rerank_chunks_short_circuits_on_empty_input():
     """Direct cover of the early-return guard inside _rerank_chunks."""
-    from openrag.core.retrieval.pipeline import _rerank_chunks
+    from core.retrieval.pipeline import _rerank_chunks
 
     rer = FakeReranker()
     out = await _rerank_chunks(rer, "q", [])

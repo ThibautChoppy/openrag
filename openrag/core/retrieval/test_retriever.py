@@ -7,15 +7,14 @@ the new core/ retriever has clean dependencies.
 from __future__ import annotations
 
 import pytest
-
-from openrag.core.models.chunk import Chunk
-from openrag.core.retrieval.retriever import (
+from core.models.chunk import Chunk
+from core.retrieval.retriever import (
     HyDeRetriever,
     MultiQueryRetriever,
     SingleRetriever,
     retriever_registry,
 )
-from openrag.core.retrieval.searcher import RetrievalSearcher
+from core.retrieval.searcher import RetrievalSearcher
 
 
 class FakeSearcher(RetrievalSearcher):

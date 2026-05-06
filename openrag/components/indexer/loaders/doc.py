@@ -22,7 +22,6 @@ from PIL import Image
 from utils.logger import get_logger
 
 from .base import BaseLoader
-from .docx import DocxLoader
 
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
 
@@ -34,8 +33,6 @@ class DocLoader(BaseLoader):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.MDLoader = DocxLoader(**kwargs)
-
         self._parser = DocParser()
 
     async def aload_document(self, file_path, metadata, save_markdown=False):
@@ -52,6 +49,10 @@ class DocLoader(BaseLoader):
 
         if not self.image_captioning:
             logger.info("Image captioning disabled. Ignoring images.")
+            for block in processed.images:
+                ref = (block.metadata or {}).get("markdown_ref")
+                if ref:
+                    result = result.replace(ref, "")
         else:
             if processed.images:
                 pil_images: list[Image.Image] = []

@@ -17,7 +17,7 @@ class RetrievalQuery(BaseModel):
     text: str
     partition: str = "default"
     top_k: int = 10
-    similarity_threshold: float = 0.95
+    similarity_threshold: float = 0.6
     filters: dict[str, Any] = Field(default_factory=dict)
     include_related: bool = False
     include_ancestors: bool = False
@@ -73,10 +73,18 @@ class Query(BaseModel):
         parts: list[str] = []
         for p in self.temporal_filters:
             try:
-                datetime.fromisoformat(p.value)
+                parsed = datetime.fromisoformat(p.value)
             except (TypeError, ValueError):
                 logger.warning(
                     "Dropping temporal predicate with non-ISO value: field=%s operator=%s value=%r",
+                    p.field,
+                    p.operator,
+                    p.value,
+                )
+                continue
+            if parsed.tzinfo is None:
+                logger.warning(
+                    "Dropping temporal predicate without timezone: field=%s operator=%s value=%r",
                     p.field,
                     p.operator,
                     p.value,
