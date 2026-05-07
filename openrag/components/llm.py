@@ -1,13 +1,59 @@
+"""Backward-compatibility shim — delegates to services.inference.vllm_client.
+
+All new code should import directly from ``services.inference.vllm_client``.
+"""
+
 import copy
 import json
+import warnings
 
 import httpx
+from config.models import LLMConfig
+from services.inference.vllm_client import VLLMClient  # noqa: F401
 from utils.logger import get_logger
 
 logger = get_logger()
 
 
+class _LLMShim:
+    """Legacy shim — delegates to ``VLLMClient`` for retry, circuit breaker,
+    and connection pooling while preserving the generator-based interface."""
+
+    def __init__(self, llm_config: LLMConfig, logger=None):
+        warnings.warn(
+            "components.llm.LLM is deprecated — use services.inference.vllm_client.VLLMClient",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.logger = logger
+        config_kwargs = {k: v for k, v in llm_config.model_dump().items() if k not in ("api_key", "base_url", "model")}
+        self._delegate = VLLMClient(
+            endpoint=llm_config.base_url,
+            model_name=llm_config.model,
+            api_key=llm_config.api_key,
+            **config_kwargs,
+        )
+
+    async def completions(self, request: dict):
+        prompt = request.pop("prompt")
+        response = await self._delegate.generate(prompt, **request)
+        yield response
+
+    async def chat_completion(self, request: dict):
+        messages = request.pop("messages")
+        stream = request.pop("stream", False)
+
+        if stream:
+            async for line in self._delegate.stream_chat(messages, **request):
+                yield line
+        else:
+            resp_dict = await self._delegate.chat(messages, **request)
+            yield resp_dict
+
+
 class LLM:
+    """Legacy LLM wrapper. New code should use VLLMClient (via DI) instead."""
+
     def __init__(self, llm_config, logger=None):
         self.logger = logger
         default_llm_config = llm_config.model_dump()
@@ -21,7 +67,6 @@ class LLM:
         }
 
     def _extract_llm_overrides(self, request: dict):
-        """Extract and apply LLM overrides from metadata.llm_override."""
         metadata = request.get("metadata") or {}
         llm_override = metadata.pop("llm_override", None) or {}
 
@@ -87,7 +132,7 @@ class LLM:
                     logger.error(f"Error while streaming chat completion: {str(e)}")
                     raise
 
-            else:  # Handle non-streaming response
+            else:
                 try:
                     response = await client.post(
                         url=f"{base_url}/chat/completions",
