@@ -6,11 +6,14 @@ import threading
 from collections import deque
 from typing import ClassVar
 
-import ray
 from config import load_config
 from fast_langdetect import LangDetectConfig, LangDetector
 from langchain_core.documents.base import Document
 from langchain_openai import ChatOpenAI
+from services.inference.distributed_semaphore import (
+    DistributedSemaphore,  # noqa: F401
+    DistributedSemaphoreActor,  # noqa: F401
+)
 from utils.logger import get_logger
 
 SOURCE_SEPARATOR = "-" * 10 + "\n\n"
@@ -31,56 +34,6 @@ class SingletonMeta(type):
                     instance = super().__call__(*args, **kwargs)
                     cls._instances[cls] = instance
         return cls._instances[cls]
-
-
-@ray.remote(max_restarts=5, max_concurrency=config.ray.semaphore.concurrency)
-class DistributedSemaphoreActor:
-    def __init__(self, max_concurrent_ops: int):
-        self.semaphore = asyncio.Semaphore(max_concurrent_ops)
-
-    async def acquire(self):
-        await self.semaphore.acquire()
-
-    def release(self):
-        self.semaphore.release()
-
-
-class DistributedSemaphore:
-    # https://chat.deepseek.com/a/chat/s/890dbcc0-2d3f-4819-af9d-774b892905bc
-    def __init__(
-        self,
-        name: str = "llmSemaphore",
-        namespace="openrag",
-        max_concurrent_ops: int = 10,
-    ):
-        self._name = name
-        self._namespace = namespace
-        self._max_concurrent_ops = max_concurrent_ops
-
-    def _get_or_create_actor(self):
-        try:
-            # reuse existing actor if it exists
-            _actor = ray.get_actor(self._name, namespace=self._namespace)
-        except ValueError:
-            # create new actor if it doesn't exist
-            _actor = DistributedSemaphoreActor.options(
-                name=self._name,
-                namespace=self._namespace,
-                lifetime="detached",
-            ).remote(self._max_concurrent_ops)
-        except Exception:
-            raise
-
-        return _actor
-
-    async def __aenter__(self):
-        semaphore_actor = self._get_or_create_actor()
-        await semaphore_actor.acquire.remote()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        semaphore_actor = self._get_or_create_actor()
-        await semaphore_actor.release.remote()
 
 
 _cached_length_function = None

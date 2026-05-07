@@ -7,8 +7,8 @@ from components.indexer.loaders.pdf_loaders.docling2 import DoclingPool
 from components.indexer.loaders.pdf_loaders.marker import MarkerPool
 from components.indexer.loaders.serializer import DocSerializer
 from components.indexer.vectordb.vectordb import ConnectorFactory
-from components.utils import DistributedSemaphoreActor
 from config import load_config
+from services.inference.distributed_semaphore import DistributedSemaphoreActor
 from utils.logger import get_logger
 
 # load config
