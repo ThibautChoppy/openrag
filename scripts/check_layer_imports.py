@@ -39,10 +39,12 @@ FORBIDDEN: dict[str, set[str]] = {
 
 
 def layer_of(module: str) -> str | None:
-    """Return the layer name if `module` is openrag.<layer>[...], else None."""
+    """Return the layer name if `module` is openrag.<layer>[...] or <layer>[...], else None."""
     parts = module.split(".")
     if len(parts) >= 2 and parts[0] == "openrag" and parts[1] in LAYERS:
         return parts[1]
+    if parts[0] in LAYERS:
+        return parts[0]
     return None
 
 

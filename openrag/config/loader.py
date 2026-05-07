@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .models import Settings
+from openrag.core.config.root import Settings
 
 logger = logging.getLogger(__name__)
 

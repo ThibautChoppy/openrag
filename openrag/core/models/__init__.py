@@ -6,7 +6,7 @@ from .contextualization import ContextualizedQuery
 from .conversation import Conversation, Message
 from .document import Document, DocumentType, ImageBlock, ProcessedDocument, TextBlock
 from .prompt import Prompt, PromptType
-from .query import RetrievalQuery
+from .query import Query, RetrievalQuery, SearchQueries, TemporalPredicate
 from .retrieval_response import RetrievalResponse
 from .retrieval_result import RetrievalResult, ScoredChunk
 from .user import ApiKey, OIDCSession, PartitionRole, TokenPayload, User, UserPartition
@@ -30,10 +30,13 @@ __all__ = [
     "ProcessedDocument",
     "Prompt",
     "PromptType",
+    "Query",
     "RetrievalQuery",
     "RetrievalResponse",
     "RetrievalResult",
     "ScoredChunk",
+    "SearchQueries",
+    "TemporalPredicate",
     "TextBlock",
     "TokenPayload",
     "User",
