@@ -3,7 +3,7 @@ from functools import wraps
 
 import httpx
 from aiobreaker import CircuitBreaker, CircuitBreakerError, CircuitBreakerListener
-from core.utils.exceptions import InferenceConnectionError, LLMParsingError, OpenRAGError
+from core.utils.exceptions import InferenceConnectionError, OpenRAGError
 from prometheus_client import Gauge
 from utils.logger import get_logger
 
@@ -25,19 +25,11 @@ except ValueError:
 _STATE_VALUES = {"ClosedState": 0, "OpenState": 1, "HalfOpenState": 2}
 
 
-def _is_client_error(exc: Exception) -> bool:
+def _is_excluded(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return 400 <= exc.response.status_code < 500
     if isinstance(exc, OpenRAGError):
         return 400 <= exc.status_code < 500
-    return False
-
-
-def _is_excluded(exc: Exception) -> bool:
-    if _is_client_error(exc):
-        return True
-    if isinstance(exc, LLMParsingError):
-        return True
     return False
 
 
