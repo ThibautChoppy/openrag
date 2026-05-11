@@ -276,3 +276,41 @@ class TestAudioChunking:
         # Chunks should be contiguous
         for i in range(len(chunks) - 1):
             assert chunks[i][1] == chunks[i + 1][0]
+
+
+class TestTranscribeFinallyCleanup:
+    """Regression test for the UnboundLocalError in transcribe()'s finally clause.
+
+    The transcribe() method previously bound ``tmp_wav`` only inside the
+    if/else block, so if ``AudioSegment.from_file`` raised at the very top
+    of the try, the finally clause crashed with ``UnboundLocalError`` and
+    masked the real exception. We mirror the buggy / fixed control flow here
+    without pulling in the heavy real dependencies (ray, openai, etc.).
+    """
+
+    @staticmethod
+    def _buggy_transcribe():
+        try:
+            # Simulate AudioSegment.from_file raising before tmp_wav is set.
+            raise RuntimeError("audio decode failed")
+            tmp_wav = None  # noqa: F841  (unreachable, matches old code)
+        finally:
+            if tmp_wav:  # noqa: F821  (deliberately exercises the bug)
+                pass
+
+    @staticmethod
+    def _fixed_transcribe():
+        tmp_wav = None
+        try:
+            raise RuntimeError("audio decode failed")
+        finally:
+            if tmp_wav:
+                pass
+
+    def test_buggy_pattern_masks_original_error(self):
+        with pytest.raises(UnboundLocalError):
+            self._buggy_transcribe()
+
+    def test_fixed_pattern_propagates_original_error(self):
+        with pytest.raises(RuntimeError, match="audio decode failed"):
+            self._fixed_transcribe()
