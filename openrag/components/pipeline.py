@@ -27,7 +27,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 from utils.logger import get_logger
 
-from .llm import LLM
+from .llm import _LLMShim as LLM
 from .map_reduce import RAGMapReduce
 from .reranker import BaseReranker, RerankerFactory
 from .retriever import BaseRetriever, RetrieverFactory
@@ -90,7 +90,7 @@ class RetrieverPipeline:
         self.allow_filterless_fallback = config.retriever.allow_filterless_fallback
 
         self.reranker_enabled = config.reranker.enabled
-        self.reranker: BaseReranker = RerankerFactory.get_reranker(config)
+        self.reranker: BaseReranker = RerankerFactory.get_reranker(config.reranker)
         logger.debug("Reranker", enabled=self.reranker_enabled, provider=config.reranker.provider)
         self.reranker_top_k = config.reranker.top_k
 

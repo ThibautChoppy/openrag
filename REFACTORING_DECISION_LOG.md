@@ -548,6 +548,102 @@ producing `AttributeError: 'TranscriberConfig' object has no attribute
 
 ---
 
+## Phase 6B — vLLM inference clients + legacy shims (2026-05-07)
+
+**1. `VLLMVision(VLLMClient, VLM)` — multiple inheritance kept for nominal typing.**
+`VLLMClient` provides the full implementation (httpx pool, retry,
+circuit breaker, `aclose()`). `VLM` is a pure abstract mixin with no
+conflicting methods, so the MRO is linear and clean. Adds only
+`_max_tokens`, `caption_image()`, and `caption_images_batch()`.
+- Why: VLM and LLM talk to the same vLLM OpenAI-compatible
+  chat/completions endpoint, so `VLLMClient` is the right concrete
+  base. Keeping `VLM` in the bases preserves nominal typing —
+  `isinstance(vision, VLM)` works, and any future code that type-checks
+  against the VLM ABC will accept `VLLMVision` without a cast.
+- Alternative considered: single inheritance `VLLMVision(VLLMClient)`
+  only, relying on structural/duck typing for registry lookup. Rejected
+  — the registry is currently structurally typed, but explicit ABC
+  conformance is cheap here (no diamond, no conflicting methods) and
+  makes the intent clear to readers.
+
+**2. `LLM.generate()` and `LLM.chat()` return `dict` (full OpenAI-compatible response body), not `str`.**
+The original ABC typed both methods as `→ str`, which forced callers to
+re-construct the surrounding OpenAI envelope when building RAG answers
+(losing `model`, `usage`, `finish_reason`, etc.). The concrete vLLM
+implementation already returned the full `httpx` JSON body; the `str`
+annotation was aspirational, not real.
+- Why: RAG answers are ultimately forwarded to the client in OpenAI format.
+  Stripping to plain text at the LLM boundary means the pipeline has to
+  re-wrap the content into `{"choices": [{"message": {"content": …}}]}`
+  further up — metadata (token counts, model id, stop reason) is lost in
+  the process. Returning `dict` preserves the full payload and keeps
+  back-ends interchangeable without wrapping shims. Using bare `dict` (not
+  a `TypedDict`) is a deliberate first step: it is backward-compatible with
+  all current callers and eases compat-shim re-exports while the
+  refactoring is still ongoing.
+- Alternative considered: introduce typed response models (`ChatCompletion`,
+  `CompletionResponse`, `ChatCompletionChunk`) immediately. Rejected as
+  premature — Phase 6 adds the concrete client; Phase 10 (API layer
+  clean-up) is the right time to freeze the contract with typed models.
+  The `dict` annotation signals intent without coupling every caller to a
+  model definition that will evolve.
+- `stream_chat` stays `AsyncIterator[str]` yielding raw SSE lines
+  (`data: {…}` strings). Parsing SSE chunks into typed dicts is Phase 10+
+  work; the current shape keeps the streaming path consistent with
+  OpenAI's SDK behaviour.
+- Future normalisation — when the typed models land, callers will migrate
+  to this pattern (TypedDict shown; Pydantic models are equally valid and
+  would expose `chat_content` / `completion_text` as properties instead):
+
+```python
+from typing import TypedDict
+
+class _Message(TypedDict):
+    role: str
+    content: str
+
+class _Choice(TypedDict):
+    index: int
+    message: _Message        # chat completions
+    finish_reason: str | None
+
+class _CompletionChoice(TypedDict):
+    index: int
+    text: str                # text completions
+    finish_reason: str | None
+
+class _Usage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+class ChatCompletion(TypedDict):
+    id: str
+    object: str              # "chat.completion"
+    model: str
+    choices: list[_Choice]
+    usage: _Usage
+
+class Completion(TypedDict):
+    id: str
+    object: str              # "text_completion"
+    model: str
+    choices: list[_CompletionChoice]
+    usage: _Usage
+
+# Convenience extractors at the pipeline boundary:
+def chat_content(resp: ChatCompletion) -> str:
+    return resp["choices"][0]["message"]["content"]
+
+def completion_text(resp: Completion) -> str:
+    return resp["choices"][0]["text"]
+```
+
+  Until then, callers that need the text can use
+  `resp["choices"][0]["message"]["content"]` directly.
+
+---
+
 ## Template for future entries
 
 ```

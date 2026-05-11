@@ -66,6 +66,9 @@ class _LangChainLLMAdapter(_CoreLLM):
         out = await self._llm.ainvoke(lc_msgs)
         return out.content
 
+    async def stream_chat(self, messages: list[dict[str, str]], **kwargs) -> Any:
+        pass  # Not implemented since legacy code doesn't use streaming; core retriever won't call this method.
+
 
 def _searcher() -> MilvusRayShim:
     """Wrap the legacy Vectordb Ray actor as a core ``RetrievalSearcher``."""

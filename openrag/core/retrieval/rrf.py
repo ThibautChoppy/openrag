@@ -40,7 +40,7 @@ def rrf_reranking(
 
     Returns:
         A single ranked list, best first. Empty input -> empty list.
-        Single input list is returned as-is.
+        Single input list is shallow-copied so callers always get a ``list``.
 
     Raises:
         ValueError: if ``k < 0`` (would produce a zero or negative
