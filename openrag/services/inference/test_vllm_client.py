@@ -191,35 +191,39 @@ class TestVLLMClientOverrides:
 
     def test_llm_override_in_metadata(self):
         client = self._make_client()
-        kwargs: dict = {
-            "metadata": {
-                "llm_override": {
-                    "base_url": "http://custom:9000/v1/",
-                    "api_key": "custom-key",
-                    "model": "custom-model",
-                },
+        original_metadata = {
+            "llm_override": {
+                "base_url": "http://custom:9000/v1/",
+                "api_key": "custom-key",
+                "model": "custom-model",
             },
         }
+        kwargs: dict = {"metadata": original_metadata}
         base_url, model, headers = client._resolve_overrides(kwargs)
         assert base_url == "http://custom:9000/v1"
         assert model == "custom-model"
         assert headers is not None
         assert headers["Authorization"] == "Bearer custom-key"
-        assert "metadata" not in kwargs
+        # kwargs must not be mutated — retries depend on llm_override surviving.
+        assert kwargs["metadata"] is original_metadata
+        assert "llm_override" in kwargs["metadata"]
 
     def test_llm_override_partial(self):
         client = self._make_client()
-        kwargs: dict = {
-            "metadata": {
-                "llm_override": {"model": "override-model"},
-                "use_map_reduce": True,
-            },
+        original_metadata = {
+            "llm_override": {"model": "override-model"},
+            "use_map_reduce": True,
         }
+        kwargs: dict = {"metadata": original_metadata}
         base_url, model, headers = client._resolve_overrides(kwargs)
         assert base_url == "http://default:8000/v1"
         assert model == "override-model"
         assert headers is None
-        assert kwargs["metadata"] == {"use_map_reduce": True}
+        assert kwargs["metadata"] is original_metadata
+        assert kwargs["metadata"] == {
+            "llm_override": {"model": "override-model"},
+            "use_map_reduce": True,
+        }
 
     def test_trailing_slash_stripped(self):
         client = self._make_client()

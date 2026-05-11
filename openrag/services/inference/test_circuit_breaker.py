@@ -2,6 +2,7 @@ import httpx
 import pytest
 from core.utils.exceptions import InferenceConnectionError, LLMParsingError
 from services.inference._circuit_breaker import (
+    _breaker_config,
     _breakers,
     get_breaker,
     with_circuit_breaker,
@@ -10,10 +11,15 @@ from services.inference._circuit_breaker import (
 
 @pytest.fixture(autouse=True)
 def _clean_breakers():
+    for breaker in _breakers.values():
+        breaker.close()
+    _breakers.clear()
+    _breaker_config.clear()
     yield
     for breaker in _breakers.values():
         breaker.close()
     _breakers.clear()
+    _breaker_config.clear()
 
 
 class TestGetBreaker:

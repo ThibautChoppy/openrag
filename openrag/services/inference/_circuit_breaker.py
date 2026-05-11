@@ -10,6 +10,7 @@ from utils.logger import get_logger
 logger = get_logger()
 
 _breakers: dict[str, CircuitBreaker] = {}
+_breaker_config: dict[str, tuple[int, float]] = {}
 
 try:
     CIRCUIT_BREAKER_STATE = Gauge(
@@ -54,6 +55,7 @@ class _LoggingListener(CircuitBreakerListener):
 
 
 def get_breaker(name: str, fail_max: int = 50, timeout_duration: float = 60.0) -> CircuitBreaker:
+    requested = (fail_max, timeout_duration)
     if name not in _breakers:
         _breakers[name] = CircuitBreaker(
             fail_max=fail_max,
@@ -62,6 +64,9 @@ def get_breaker(name: str, fail_max: int = 50, timeout_duration: float = 60.0) -
             exclude=[_is_excluded],
             listeners=[_LoggingListener()],
         )
+        _breaker_config[name] = requested
+    elif _breaker_config.get(name) != requested:
+        raise ValueError(f"Breaker '{name}' already exists with config={_breaker_config[name]}, requested={requested}")
     return _breakers[name]
 
 

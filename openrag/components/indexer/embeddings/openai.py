@@ -28,6 +28,10 @@ def _run_sync(coro):
     return _SYNC_POOL.submit(asyncio.run, coro).result()
 
 
+def _normalize_texts(texts: list[str | Document]) -> list[str]:
+    return [item.page_content if isinstance(item, Document) else item for item in texts]
+
+
 class _ShimOpenAIEmbedding(BaseEmbedding):
     """Legacy shim — delegates to ``VLLMEmbedder`` for actual HTTP transport.
 
@@ -66,14 +70,14 @@ class _ShimOpenAIEmbedding(BaseEmbedding):
         return self._delegate._dimension
 
     def embed_documents(self, texts: list[str | Document]) -> list[list[float]]:
-        if isinstance(texts[0], Document):
-            texts = [doc.page_content for doc in texts]
-        return _run_sync(self._delegate.embed(texts))
+        if not texts:
+            return []
+        return _run_sync(self._delegate.embed(_normalize_texts(texts)))
 
     async def aembed_documents(self, texts: list[str | Document]) -> list[list[float]]:
-        if texts and isinstance(texts[0], Document):
-            texts = [doc.page_content for doc in texts]
-        return await self._delegate.embed(texts)
+        if not texts:
+            return []
+        return await self._delegate.embed(_normalize_texts(texts))
 
     def embed_query(self, text: str) -> list[float]:
         return _run_sync(self._delegate.embed_single(text))

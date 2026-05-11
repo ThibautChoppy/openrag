@@ -75,30 +75,28 @@ class VLLMClient(LLM):
         self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
 
     def _resolve_overrides(self, kwargs: dict) -> tuple[str, str, dict[str, str] | None]:
-        """Pop ``metadata.llm_override`` from *kwargs* and return resolved values.
+        """Read ``metadata.llm_override`` from *kwargs* without mutating caller data.
 
-        Returns ``(base_url, model, override_headers | None)``.
-        *kwargs* is mutated in-place.
+        Pure read: ``kwargs`` is untouched so retries see the original override on
+        every attempt. The caller strips ``metadata`` from the outbound payload via
+        ``_payload_kwargs`` — every ``metadata`` key is OpenRAG-internal and never
+        belongs on the wire.
         """
         base_url = self._endpoint
         model = self._model
         override_headers: dict[str, str] | None = None
 
-        metadata = kwargs.get("metadata")
-        if metadata:
-            llm_override = metadata.pop("llm_override", None) or {}
-            if not metadata:
-                kwargs.pop("metadata")
-            if llm_override:
-                if llm_override.get("base_url"):
-                    base_url = llm_override["base_url"].rstrip("/")
-                if llm_override.get("model"):
-                    model = llm_override["model"]
-                if llm_override.get("api_key"):
-                    override_headers = {
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {llm_override['api_key']}",
-                    }
+        llm_override = (kwargs.get("metadata") or {}).get("llm_override") or {}
+        if llm_override:
+            if llm_override.get("base_url"):
+                base_url = llm_override["base_url"].rstrip("/")
+            if llm_override.get("model"):
+                model = llm_override["model"]
+            if llm_override.get("api_key"):
+                override_headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {llm_override['api_key']}",
+                }
 
         return base_url, model, override_headers
 
@@ -106,6 +104,7 @@ class VLLMClient(LLM):
     @with_retry(max_attempts=3)
     async def generate(self, prompt: str, **kwargs) -> dict:
         base_url, model, headers = self._resolve_overrides(kwargs)
+        kwargs.pop("metadata", None)
         payload = {**self._defaults, **kwargs, "model": model, "prompt": prompt}
         try:
             resp = await self._client.post(f"{base_url}/completions", json=payload, headers=headers)
@@ -125,6 +124,7 @@ class VLLMClient(LLM):
     @with_retry(max_attempts=3)
     async def chat(self, messages: list[dict[str, str]], **kwargs) -> dict:
         base_url, model, headers = self._resolve_overrides(kwargs)
+        kwargs.pop("metadata", None)
         payload = {**self._defaults, **kwargs, "model": model, "messages": messages, "stream": False}
         try:
             resp = await self._client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
@@ -142,16 +142,24 @@ class VLLMClient(LLM):
 
     async def stream_chat(self, messages: list[dict[str, str]], **kwargs) -> AsyncIterator[str]:
         base_url, model, headers = self._resolve_overrides(kwargs)
+        kwargs.pop("metadata", None)
         payload = {**self._defaults, **kwargs, "model": model, "messages": messages, "stream": True}
-        async with self._client.stream("POST", f"{base_url}/chat/completions", json=payload, headers=headers) as resp:
-            if resp.status_code >= 400:
-                await resp.aread()
-                raise InferenceError(
-                    f"LLM streaming error ({resp.status_code}): {resp.text[:500]}",
-                    status_code=resp.status_code,
-                )
-            async for line in resp.aiter_lines():
-                yield line
+        try:
+            async with self._client.stream(
+                "POST", f"{base_url}/chat/completions", json=payload, headers=headers
+            ) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    raise InferenceError(
+                        f"LLM streaming error ({resp.status_code}): {resp.text[:500]}",
+                        status_code=resp.status_code,
+                    )
+                async for line in resp.aiter_lines():
+                    yield line
+        except httpx.ConnectError as exc:
+            raise InferenceConnectionError(f"Cannot reach LLM at {base_url}") from exc
+        except httpx.TimeoutException as exc:
+            raise InferenceTimeoutError(f"LLM streaming request timed out at {base_url}") from exc
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -223,7 +231,7 @@ class VLLMEmbedder(Embedder):
         try:
             data = resp.json()["data"]
             embeddings = [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
-        except (KeyError, IndexError, TypeError) as exc:
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise EmbeddingResponseError(
                 "Unexpected embedding response format",
                 model_name=self._model,

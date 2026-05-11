@@ -21,6 +21,8 @@ class _RerankerShim(BaseReranker):
             ranked = await self._delegate.rerank(query, texts, top_k=top_k)
             output = []
             for index, score in ranked:
+                if not 0 <= index < len(documents):
+                    continue
                 doc = documents[index]
                 doc.metadata["relevance_score"] = score
                 output.append(doc)

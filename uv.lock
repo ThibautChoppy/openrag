@@ -2693,6 +2693,7 @@ dependencies = [
     { name = "ruff" },
     { name = "spire-doc" },
     { name = "sqlalchemy-utils" },
+    { name = "tenacity" },
     { name = "torch" },
     { name = "umap-learn" },
 ]
@@ -2758,6 +2759,7 @@ requires-dist = [
     { name = "ruff", specifier = ">=0.14.1" },
     { name = "spire-doc", specifier = ">=13.1.0" },
     { name = "sqlalchemy-utils" },
+    { name = "tenacity", specifier = ">=8.2.0" },
     { name = "torch", specifier = ">=2.4.1" },
     { name = "umap-learn", specifier = ">=0.5.9.post2" },
 ]

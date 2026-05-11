@@ -19,7 +19,12 @@ class LLM(ABC):
         """Chat completion with message list."""
         ...
 
-    async def stream_chat(self, messages: list[dict[str, str]], **kwargs) -> AsyncIterator[str]:
-        """Stream chat completion as raw SSE lines. Default falls back to non-streaming."""
-        result = await self.chat(messages, **kwargs)
-        yield result
+    @abstractmethod
+    def stream_chat(self, messages: list[dict[str, str]], **kwargs) -> AsyncIterator[str]:
+        """Stream chat completion as raw SSE lines.
+
+        Implementations must be ``async def`` generators yielding ``str`` chunks.
+        Declared without ``async def`` here so the abstract signature matches the
+        ``AsyncIterator[str]`` return type without forcing an empty ``yield``.
+        """
+        ...

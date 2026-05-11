@@ -6,7 +6,7 @@ coexist until Phase 8 cutover.
 Scheduled for removal in Phase 12.
 """
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 # Side-effect import: pre-loads the indexer-utils submodule so the legacy
 # circular import between `components.utils` and `components.indexer.utils.files`
@@ -51,6 +51,9 @@ class _LangChainLLMAdapter(_CoreLLM):
         lc_msgs = [self._ROLE_MAP[m["role"]](content=m["content"]) for m in messages]
         out = await self._llm.ainvoke(lc_msgs)
         return out.content
+
+    async def stream_chat(self, messages: list[dict[str, str]], **kwargs) -> Any:
+        pass  # Not implemented since the contextualizer never streams.
 
 
 def _chunks_to_documents(chunks: list, base_metadata: dict) -> list[Document]:
