@@ -20,11 +20,24 @@ class VectorStore(ABC):
     async def search(
         self,
         embedding: list[float],
+        query_text: str | None = None,
         top_k: int = 10,
         collection: str = "default",
         filters: dict[str, Any] | None = None,
+        similarity_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Search by embedding vector. Returns raw results."""
+        """Similarity search returning raw result dicts.
+
+        Hybrid (dense + lexical) retrieval is a backend configuration
+        concern, not a separate entry point: when a backend has it enabled
+        it fuses a dense vector match with a lexical match, and ``query_text``
+        carries the raw query such backends compute the sparse vector from
+        server-side. Dense-only backends ignore ``query_text``.
+
+        ``similarity_threshold`` (when set) lower-bounds the dense leg's
+        similarity; backends supporting range search drop anything scoring at
+        or below it. ``None`` disables the bound.
+        """
         ...
 
     @abstractmethod
