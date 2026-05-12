@@ -9,19 +9,19 @@ Usage (from repo root, inside the container):
 
     # Dry-run — inspect what would change, no writes:
     docker compose run --no-deps --rm --build --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/migrate.py --dry-run
+        uv run python services/persistence/migrations/milvus/migrate.py --dry-run
 
     # Upgrade to latest:
     docker compose run --no-deps --rm --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/migrate.py
+        uv run python services/persistence/migrations/milvus/migrate.py
 
     # Upgrade to a specific version:
     docker compose run --no-deps --rm --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/migrate.py --target 2
+        uv run python services/persistence/migrations/milvus/migrate.py --target 2
 
     # Downgrade to version 0 (resets version property, drops indexes):
     docker compose run --no-deps --rm --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/migrate.py --downgrade --target 0
+        uv run python services/persistence/migrations/milvus/migrate.py --downgrade --target 0
 
 Convention — each migration module must expose:
     TARGET_VERSION: int          # the version this script brings the DB to
@@ -36,9 +36,9 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from components.indexer.vectordb.vectordb import SCHEMA_VERSION_PROPERTY_KEY
 from config import load_config
 from pymilvus import MilvusClient
+from services.storage.milvus_store import SCHEMA_VERSION_PROPERTY_KEY
 from utils.logger import get_logger
 
 logger = get_logger()
