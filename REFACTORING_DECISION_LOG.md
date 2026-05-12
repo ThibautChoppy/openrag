@@ -751,6 +751,20 @@ The legacy `MilvusDB` exposes `get_file_chunks`, `get_chunk_by_id`, `get_file_ch
 
 ---
 
+## Phase 7A.4 — Unified migrations namespace (2026-05-12)
+
+**1. Nest Postgres alembic and Milvus migrations as siblings under `services/persistence/migrations/{alembic,milvus}/`, not as two parallel roots.**
+Person A's pulled-forward 7A.4 (commit `91f7078`, logged in [Phase 7A.1 §1](#phase-7a1--connection-manager--schema-2026-05-12)) placed alembic directly at `services/persistence/migrations/`. The phase 7 plan is silent on Milvus migrations — they are an OpenRAG-specific addition (Milvus schema-version property + generic runner under `openrag/scripts/migrations/milvus/`) not contemplated by the spec. The first take on the Milvus side put them at `services/storage/migrations/` next to `milvus_store.py` (commits `b40de00` + `26311f0`, since reset out of history); reshuffled to a unified namespace before push.
+- Why: One root with backend subdirs ("where do I run migrations?" → `services/persistence/migrations/`, "for which backend?" → `alembic/` or `milvus/`) is easier to reason about than two roots that split "schema evolution" across two services-layer namespaces purely because their adapters happen to live in different sub-folders. The unified shape also leaves room for additional backends (S3 lifecycle, future tenancy stores) without re-litigating where migrations live each time. Aligns with the SaaS end-state ([[project-saas-collection-per-tenant]] memory) where per-tenant collection lifecycle and per-tenant schema versioning will both grow inside this same namespace.
+- Alternative considered: (a) spec-plus-by-symmetry layout — alembic under `services/persistence/migrations/`, Milvus under `services/storage/migrations/`. Rejected: makes the storage layer carry a `migrations/` peer to `milvus_store.py`, conflating "the adapter" with "the adapter's schema-evolution scripts", and forces every reader to know which backend hides where. (b) flatten everything under one dir without backend subdirs. Rejected: alembic's filename conventions (`<hash>_<slug>.py`) and the Milvus runner's `N.description.py` discovery rules would step on each other.
+
+**2. Milvus migration runner imports `SCHEMA_VERSION_PROPERTY_KEY` from `services.storage.milvus_store`, not from `components.indexer.vectordb.vectordb`.**
+The constant exists identically in both modules right now (the new store copied it byte-for-byte from the legacy MilvusDB during 7B). Either import resolves; we picked the new home.
+- Why: The migration set, the constant, and the new adapter all live under `services/` after this move. Importing from the legacy module would create a backwards dependency from the new namespace into the deprecation-path module, pinning `components.indexer.vectordb.vectordb` alive past Phase 9's planned deletion. Updating the import now is a zero-risk follow-up to the move (legacy still defines the constant with the same value, so behaviour is identical) and makes the legacy deletion a single grep-and-delete in Phase 9 rather than "deletion + N migrate.py import updates".
+- Alternative considered: leave the import on the legacy module until Phase 9 forces the issue. Rejected — no benefit, and `9` is the wrong phase to be hunting incidental imports.
+
+---
+
 ## Template for future entries
 
 ```
