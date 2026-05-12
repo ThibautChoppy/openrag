@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+_MIGRATIONS_DIR = Path(__file__).parent / "migrations" / "alembic"
 _ALEMBIC_INI = _MIGRATIONS_DIR / "alembic.ini"
 
 _RETRY_ATTEMPTS = 5
@@ -138,7 +138,7 @@ class ConnectionManager:
 
         cfg = Config(str(_ALEMBIC_INI))
         # ``script_location`` in alembic.ini is relative to the .ini file via
-        # %(here)s, so this resolves to services/persistence/migrations/.
+        # %(here)s, so this resolves to services/persistence/migrations/alembic/.
         cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
         cfg.set_main_option("sqlalchemy.url", self._dsn)
         logger.info("Running Alembic migrations against %s", self._dsn_log)
