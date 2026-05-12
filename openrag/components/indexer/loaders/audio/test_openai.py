@@ -279,19 +279,9 @@ class TestAudioChunking:
 
 
 class TestTranscribeFinallyCleanup:
-    """Regression test for the UnboundLocalError in transcribe()'s finally clause.
-
-    The transcribe() method previously bound ``tmp_wav`` only inside the
-    if/else block, so if ``AudioSegment.from_file`` raised at the very top
-    of the try, the finally clause crashed with ``UnboundLocalError`` and
-    masked the real exception. We mirror the buggy / fixed control flow here
-    without pulling in the heavy real dependencies (ray, openai, etc.).
-    """
-
     @staticmethod
     def _buggy_transcribe():
         try:
-            # Simulate AudioSegment.from_file raising before tmp_wav is set.
             raise RuntimeError("audio decode failed")
             tmp_wav = None  # noqa: F841  (unreachable, matches old code)
         finally:
