@@ -644,6 +644,83 @@ def completion_text(resp: Completion) -> str:
 
 ---
 
+## Phase 7A.1 — Connection manager + schema (2026-05-12)
+
+**1. Pulled the 7A.4 migration directory move forward into the 7A.1 commit set.**
+The spec files the directory move (`scripts/migrations/alembic/` →
+`services/persistence/migrations/`) and the env.py rewire under a separate
+subsection (**7A.4 — Migrations**), distinct from 7A.1 (`connection.py` +
+`schema.py`). The move was done in this commit set anyway.
+- Why: The 7A.1 work creates `schema.py` whose entire purpose is to be
+  Alembic's metadata target. Leaving env.py pointing at the legacy
+  `components.indexer.vectordb.models.Base.metadata` would have created a
+  short-lived intermediate state where the two metadata definitions had to
+  stay byte-for-byte identical (or Alembic autogenerate would flag the
+  schema as drifted). Moving env.py at the same time avoids that risk
+  window — once schema.py exists, env.py points at it directly.
+- Alternative considered: strict 7A.1-only — create `schema.py` but leave
+  the old `scripts/migrations/alembic/env.py` importing `Base.metadata`
+  until 7A.4. Rejected for the dual-source-of-truth risk above, and
+  because the migration move is a pure `git mv` with no code changes
+  beyond two import lines.
+
+**2. Extended `RDBConfig` with `database`, `pool_min_size`, `pool_max_size`, `command_timeout`.**
+The spec's `ConnectionManager.__init__` pseudocode reads `config.database`,
+`config.pool_min_size`, `config.pool_max_size` directly. None of those
+fields existed on OpenRAG's `RDBConfig`. Added them (with defaults
+`pool_min_size=5`, `pool_max_size=20`, `command_timeout=30`, `database=None`)
+plus matching `POSTGRES_DATABASE` / `POSTGRES_POOL_{MIN,MAX}_SIZE` /
+`POSTGRES_COMMAND_TIMEOUT` env-var mappings in `core/config/loader.py`.
+- Why: 7A.1 doesn't compile otherwise. The spec's "files to create" table
+  lists only `connection.py` + `schema.py`, but the implementation it shows
+  has a hard config-shape dependency. Treated as required scaffolding for
+  7A.1 rather than as a 7E (DI) concern, since the new fields belong on
+  the same config object that already carries `host`/`port`/`user`/`password`.
+- Alternative considered: pass DSN + pool sizes as bare positional args
+  to `ConnectionManager.__init__`, leaving `RDBConfig` untouched. Rejected
+  — the spec's reference implementation accepts a `PostgresConfig` object
+  and the 7E DI wiring (`create_catalog_store(config)`) hands the whole
+  config in. Splitting fields across the call site and the config would
+  diverge from that contract.
+
+**3. `RDBConfig.database` stays optional; `ConnectionManager.__init__` raises if it's still `None`.**
+The legacy code derives the Postgres database name from the Milvus
+collection name (`f"partitions_for_collection_{collection_name}"`) at
+`MilvusDB` actor startup. The new `RDBConfig` could either (a) require the
+caller to set `database` explicitly, or (b) compute the name itself from
+`VectorDBConfig.collection_name`. Chose (a) with a None default and a
+constructor-time guard.
+- Why: Crossing config sections (RDB reading VectorDB) would entangle two
+  otherwise independent config blocks and make `RDBConfig` non-portable.
+  The collection→database mapping is an integration concern that belongs
+  in the 7E DI wiring (`create_catalog_store` will build the database
+  name from `config.vectordb.collection_name` and inject it). The guard
+  in `ConnectionManager` makes the missing-database case fail loudly at
+  construction instead of silently producing a malformed DSN.
+- Alternative considered: derive the database name inside
+  `RDBConfig.model_post_init` from a separately-injected collection name.
+  Rejected — adds two-way coupling between config sections for no gain;
+  7E handles the wiring cleanly in one place.
+
+**4. Programmatic schema-vs-ORM diff used as the acceptance check.**
+After rewriting all 7 tables as `sa.Table(...)` on a shared `MetaData`,
+ran a column-by-column / index-by-index / constraint-by-constraint diff
+against `components.indexer.vectordb.models.Base.metadata`. Empty diff =
+passes. No assertion is shipped — this was a one-time verification, not
+runtime behaviour.
+- Why: Alembic autogenerate will treat any divergence between the new
+  metadata target and the live database (which was built from the legacy
+  ORM) as a pending schema change. The diff confirms that won't happen
+  on first run, and documents the methodology for the next migration:
+  any future schema change must update both `schema.py` and the legacy
+  `models.py` until Phase 9 deletes the latter.
+- Alternative considered: ship the diff as a runtime test in 7F.
+  Deferred — 7F's repo tests already need a live Postgres; a metadata
+  diff doesn't need one and can live as a one-off check until the
+  legacy `models.py` goes away in Phase 9.
+
+---
+
 ## Template for future entries
 
 ```
