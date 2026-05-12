@@ -34,6 +34,14 @@ class RDBConfig(ConfigMixin):
     user: str = "root"
     password: str = Field(default="", repr=False)
     default_file_quota: int = -1
+    # `database` is intentionally optional — historically the database name is
+    # derived from the Milvus collection name (`partitions_for_collection_{collection}`)
+    # by the caller wiring the catalog store. The connection manager raises if
+    # this is still None at initialize() time.
+    database: str | None = None
+    pool_min_size: int = 5
+    pool_max_size: int = 20
+    command_timeout: int = 30
 
 
 # ---------------------------------------------------------------------------
