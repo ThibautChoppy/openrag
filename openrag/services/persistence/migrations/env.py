@@ -7,8 +7,8 @@ from logging.config import fileConfig
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from alembic import context
-from components.indexer.vectordb.models import Base
 from config import load_config
+from services.persistence.schema import metadata as target_metadata
 from sqlalchemy import URL, engine_from_config, pool
 
 rag_config = load_config()
@@ -41,12 +41,8 @@ database_url = URL.create(
 )
 config.set_main_option("sqlalchemy.url", database_url.render_as_string(hide_password=False))
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-
-target_metadata = Base.metadata
+# Metadata target for autogenerate is imported from
+# `services.persistence.schema` (metadata-only Table definitions).
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
