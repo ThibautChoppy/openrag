@@ -200,7 +200,10 @@ class PgOIDCSessionRepository(OIDCSessionRepository):
 
     async def delete_expired(self) -> int:
         """Hard-delete rows expired more than 7 days ago. Returns count."""
-        cutoff = datetime.now(UTC) - _EXPIRED_RETENTION
+        # The ``session_expires_at`` column is TIMESTAMP WITHOUT TIME ZONE,
+        # so the cutoff has to be tz-naive UTC — asyncpg refuses to bind a
+        # tz-aware value against a tz-naive column.
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - _EXPIRED_RETENTION
         result = await self.pool.execute(
             "DELETE FROM oidc_sessions WHERE session_expires_at < $1",
             cutoff,

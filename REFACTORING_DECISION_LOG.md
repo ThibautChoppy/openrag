@@ -1022,12 +1022,76 @@ mandates the short form (`from components.ray_utils import ...`).
 
 ---
 
-## Phase 7F — Integration test layout (2026-05-13)
+## Phase 7F — Integration tests (2026-05-13)
 
 **1. Integration tests land at `tests/integration/`, not colocated with the SUT and not under `tests/api_tests/`.**
-The project today has tests in two places: colocated `openrag/**/test_*.py` (the long-standing convention) and `tests/api_tests/` (HTTP-style black-box tests against a running OpenRAG server). STRATEGY §13C describes a target end-state of `tests/{unit,integration,load}/` with everything under one root. 7F lands integration tests now; the unified layout doesn't arrive until Phase 13C.
-- Why: Integration tests for `MilvusVectorStore` need to escape `pytest.ini`'s `testpaths = openrag` so a bare `uv run pytest` (the default unit run) does not drive real infrastructure. The cleanest interim home is exactly where Phase 13C will park them anyway — `tests/integration/` — so the file lands once and does not need to move during the sweep.
+The project today has tests in two places: colocated `openrag/**/test_*.py` (the long-standing convention) and `tests/api_tests/` (HTTP-style black-box tests against a running OpenRAG server). STRATEGY §13C describes a target end-state of `tests/{unit,integration,load}/` with everything under one root. 7F lands integration tests for both the asyncpg repos and `MilvusVectorStore`; the unified layout doesn't arrive until Phase 13C.
+- Why: Integration tests for both stores need to escape `pytest.ini`'s `testpaths = openrag` so a bare `uv run pytest` (the default unit run) does not drive real infrastructure. The cleanest interim home is exactly where Phase 13C will park them anyway — `tests/integration/` — so the file lands once and does not need to move during the sweep. Colocating per-repo tests under `openrag/services/persistence/test_*_repo.py` would also force every unit-test invocation to either skip (silently masking failures) or fail (in CI without infra) depending on how the skip is wired, neither of which is a good default.
 - Alternative considered: (a) park integration tests under `tests/api_tests/` to match the existing infra-test sibling layout. Rejected — `api_tests/` is HTTP-API-style by convention (httpx against a running server); adapter-level integration tests don't fit that mould, and the strategy doc has already settled the end-state location. (b) keep them colocated and rely on the `integration` pytest marker for deselection. Rejected — relies on every CI invocation remembering `-m "not integration"` and still pulls pymilvus/Postgres imports into the default unit run.
+
+**2. One ephemeral test database per session, truncate between tests.**
+The fixture creates `openrag_phase7_test` on session start with a clean
+schema, runs migrations once via `PostgresStore.initialize()`, and lets
+every test share the same store. An autouse fixture truncates the seven
+user-modifiable tables with `RESTART IDENTITY CASCADE` so each test
+starts with primary keys at 1.
+- Why: dropping/recreating per test would multiply the session cost by
+  the test count; a per-test truncate is microseconds. The fresh-DB-
+  per-session contract gives us migration coverage for free (any
+  Alembic regression surfaces at fixture setup, not in production).
+- Alternative considered: rollback-per-test via savepoints. Rejected
+  — asyncpg pools cycle connections, so a top-level rollback only
+  cleans the one connection used; the next test could see partial
+  state on a different connection. Truncate is straightforward and
+  matches what Phase 8 orchestrator tests will want.
+
+**3. Session-scoped loop and fixtures (`loop_scope="session"`).**
+`pytest-asyncio`'s default `function`-scope event loop conflicts with a
+session-scoped async fixture: the asyncpg pool binds to the loop it was
+created on, and each test then gets a different loop. Marking both the
+fixtures and the tests with `loop_scope="session"` keeps everything on
+one loop, which is also what asyncpg expects.
+- Why: a session-scoped pool is the whole reason to run an integration
+  suite — function-scoped pools would defeat the purpose. The
+  `loop_scope` knob is the official pytest-asyncio 1.x API for this.
+- Alternative considered: function-scoped pools (one per test).
+  Rejected — every test would pay the connection-establishment cost,
+  inflating the suite from ~5s to easily 30s+.
+
+**4. `tests/integration/test_stores.py` is `xfail(strict=True)` until Phase 7B is wired through DI.**
+The Phase 7F plan calls for a cross-store full-cycle test
+(`create partition → upsert chunks → search → delete`). Phase 7B has landed `MilvusVectorStore` on this branch, but the DI factory `create_vector_store` was not yet returning the real store at the time this test file was written; the test stayed `xfail(strict=True)` so the day the DI wiring flips, the test going green automatically trips a failure that prompts the author to remove the marker — no silent passes.
+- Why: the file exists so the eventual diff is just a body replacement. The strict marker prevents "forgot to remove xfail" rot.
+- Alternative considered: skip with `pytest.skip(...)` or leave the file out entirely. Rejected — skips are too easy to forget, and an absent file means the cross-store test has to remember to be created.
+
+**5. Fixed two bugs surfaced by writing the tests, in the same diff.**
+The integration suite caught two tz-naive/tz-aware mismatches in code
+written during 7A.2:
+
+* `PgOIDCSessionRepository.delete_expired` constructed
+  `datetime.now(UTC) - _EXPIRED_RETENTION` (tz-aware) and bound it
+  against the tz-naive `session_expires_at` column. asyncpg refuses
+  the cast at bind time. Fix: strip `tzinfo` from the cutoff before
+  the query.
+* `services/persistence/migrations/alembic/env.py` unconditionally clobbered
+  `sqlalchemy.url` with one derived from `load_config()`, ignoring
+  the DSN that `ConnectionManager.run_migrations()` had just set —
+  which is why the first run of the suite tried to resolve the docker
+  hostname `rdb` from a host process. Fix: defer to the preset URL
+  unless it's the alembic.ini placeholder.
+
+Both fixes are tiny but load-bearing for any non-default deployment
+(test DBs, named environments, CI overrides). I kept them in this
+commit rather than splitting them out — they only show up against a
+real database, and splitting would mean landing the new tests broken.
+- Why: the alternative (separate fix commits) would have the
+  integration tests fail on first introduction, which is a bad signal
+  in `git log`.
+- Alternative considered: hard-code a workaround in the test fixture.
+  Rejected — the underlying bugs would still be there waiting for
+  Phase 8 orchestrator tests to hit them.
+
+---
 ## Template for future entries
 
 ```

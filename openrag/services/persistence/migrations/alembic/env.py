@@ -23,23 +23,32 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# override the SQLALCHEMY URL with an environment variable
-rdb_user = rag_config.rdb.user
-rdb_password = rag_config.rdb.password
-rdb_port = rag_config.rdb.port
-rdb_host = rag_config.rdb.host
+# When the caller (typically ``ConnectionManager.run_migrations``) already
+# wired a DSN into ``sqlalchemy.url``, defer to it. The default in
+# ``alembic.ini`` is the placeholder ``driver://user:pass@localhost/dbname``
+# from Alembic's template; we treat that and an empty value as "fall back to
+# the OpenRAG config".
+preset_url = config.get_main_option("sqlalchemy.url") or ""
+if (not preset_url) or preset_url.startswith("driver://"):
+    rdb_user = rag_config.rdb.user
+    rdb_password = rag_config.rdb.password
+    rdb_port = rag_config.rdb.port
+    rdb_host = rag_config.rdb.host
 
-collection_name = rag_config.vectordb.collection_name
+    collection_name = rag_config.vectordb.collection_name
 
-database_url = URL.create(
-    drivername="postgresql",
-    username=rdb_user,
-    password=rdb_password,
-    host=rdb_host,
-    port=rdb_port,
-    database=f"partitions_for_collection_{collection_name}",
-)
-config.set_main_option("sqlalchemy.url", database_url.render_as_string(hide_password=False))
+    database_url = URL.create(
+        drivername="postgresql",
+        username=rdb_user,
+        password=rdb_password,
+        host=rdb_host,
+        port=rdb_port,
+        database=f"partitions_for_collection_{collection_name}",
+    )
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False),
+    )
 
 # Metadata target for autogenerate is imported from
 # `services.persistence.schema` (metadata-only Table definitions).
