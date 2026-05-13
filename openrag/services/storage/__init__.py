@@ -5,16 +5,17 @@ adapters that orchestrators consume through the core port ABCs:
 
 * :class:`postgres_store.PostgresStore` — composes the asyncpg
   :class:`ConnectionManager` with every repository implementation under
-  :mod:`openrag.services.persistence`, satisfying
-  :class:`openrag.core.ports.catalog_store.CatalogStore`.
-* :class:`milvus_store.MilvusStore` — Milvus-backed vector ops (Phase 7B,
-  still a placeholder at this point in the refactor).
+  :mod:`services.persistence`, satisfying
+  :class:`core.ports.catalog_store.CatalogStore`.
+* :class:`milvus_store.MilvusVectorStore` — Milvus 2.6 backed vector ops
+  satisfying :class:`core.vector_stores.VectorStore`.
 
 The Ray actor that callers know today lives at
-:mod:`openrag.services.storage.milvus_ray_shim` and will be folded into the
+:mod:`services.storage.milvus_ray_shim` and will be folded into the
 new stores during Phase 7C.
 """
 
+from services.storage.milvus_store import MilvusVectorStore
 from services.storage.postgres_store import PostgresStore
 
-__all__ = ["PostgresStore"]
+__all__ = ["MilvusVectorStore", "PostgresStore"]

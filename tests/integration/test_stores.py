@@ -1,10 +1,20 @@
-"""Phase 7F — cross-store full-cycle (Phase 7B placeholder).
+"""Phase 7F — cross-store full-cycle integration (Phase 7C handoff).
 
-The full create-partition / upsert-chunks / search / delete integration test
-named in the Phase 7F plan needs both :class:`PostgresStore` and the Phase 7B
-``MilvusVectorStore``. Phase 7B is not yet landed, so this test is marked
-``xfail`` rather than silently skipped — once 7B lands the body fills in and
-the marker comes off in the same diff.
+Phase 7B's :class:`MilvusVectorStore` is wired through DI now, but a real
+cross-store cycle (``create partition → upsert pre-embedded chunks → search
+→ delete``) still needs:
+
+* a Milvus instance reachable from the test runner (Person B's
+  ``test_milvus_store_integration.py`` already covers that piece in
+  isolation), and
+* a fixture that builds *both* stores against the same Milvus collection
+  + Postgres database — the existing ``postgres_store`` fixture in
+  ``conftest.py`` doesn't yet hand out a Milvus store.
+
+The combined fixture lands as part of Phase 7C (shim) so the assertion
+matches the legacy ``MilvusDB`` cross-store flow byte-for-byte. Until then
+this test stays ``xfail(strict=True)`` so the day the fixture is added and
+the body filled in, the unintended pass trips a clear failure.
 """
 
 from __future__ import annotations
@@ -15,7 +25,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 
 
 @pytest.mark.xfail(
-    reason="Phase 7B MilvusVectorStore not landed — see REFACTORING_DECISION_LOG.md",
+    reason="cross-store fixture lands in Phase 7C — see REFACTORING_DECISION_LOG.md",
     strict=True,
 )
 async def test_cross_store_full_cycle():
@@ -27,7 +37,4 @@ async def test_cross_store_full_cycle():
     #      ids/text.
     #   4. ``postgres_store.partition_repo.delete_partition`` cascades the
     #      catalog rows; ``vector_store.delete`` clears the Milvus side.
-    #
-    # Until 7B exists there is nothing to assert, so this raises and trips
-    # the xfail marker.
-    raise NotImplementedError("Phase 7B MilvusVectorStore not landed")
+    raise NotImplementedError("cross-store fixture lands in Phase 7C")

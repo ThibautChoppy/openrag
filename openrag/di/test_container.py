@@ -33,6 +33,24 @@ def _settings(database: str | None = None, collection: str = "vdb_test") -> Sett
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_milvus_clients(monkeypatch):
+    """Replace the pymilvus gRPC clients with mocks for the whole module.
+
+    ``ServiceContainer(settings)`` eagerly builds a :class:`MilvusVectorStore`
+    in its constructor; the real pymilvus client tries to open a channel
+    immediately and hangs if Milvus is unreachable. These tests only need
+    to verify the *wiring*, so we stub the clients out. Real Milvus
+    coverage lives in ``tests/integration/test_milvus_store_integration.py``.
+    """
+    from unittest.mock import MagicMock
+
+    import services.storage.milvus_store as ms
+
+    monkeypatch.setattr(ms, "MilvusClient", MagicMock())
+    monkeypatch.setattr(ms, "AsyncMilvusClient", MagicMock())
+
+
 class TestLegacyContainerStillWorks:
     """The pre-Phase-7E callers do ``ServiceContainer()`` with no settings."""
 
@@ -117,15 +135,29 @@ class TestCatalogStoreWiring:
         assert repo is getattr(c.catalog_store, name)
 
 
-class TestVectorStoreNotYetWired:
-    def test_factory_raises_phase_7b_message(self):
-        with pytest.raises(NotImplementedError, match="Phase 7B"):
-            create_vector_store(_settings())
+class TestVectorStoreWiring:
+    """The factory returns a real :class:`MilvusVectorStore`; pymilvus gRPC
+    clients are patched out so these unit tests don't need Milvus reachable.
+    The full integration coverage lives in
+    ``tests/integration/test_milvus_store_integration.py``."""
 
-    def test_container_property_surfaces_factory_error(self):
+    def test_factory_returns_milvus_vector_store(self):
+        from services.storage.milvus_store import MilvusVectorStore
+
+        store = create_vector_store(_settings())
+        assert isinstance(store, MilvusVectorStore)
+
+    def test_container_property_returns_milvus_vector_store(self):
+        from services.storage.milvus_store import MilvusVectorStore
+
         c = ServiceContainer(_settings())
-        with pytest.raises(NotImplementedError, match="Phase 7B"):
-            _ = c.vector_store
+        assert isinstance(c.vector_store, MilvusVectorStore)
+
+    def test_container_caches_vector_store(self):
+        c = ServiceContainer(_settings())
+        # Repeated property reads must return the same instance — every
+        # construction opens a fresh pymilvus gRPC channel.
+        assert c.vector_store is c.vector_store
 
 
 class TestRepositoriesFactory:

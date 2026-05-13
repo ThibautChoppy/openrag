@@ -6,8 +6,8 @@ three things:
 1. Populates the inference registries (Phase 6) so factory helpers can spin
    up embedders, LLMs, rerankers and VLMs by name.
 2. Builds the storage adapters (Phase 7E) when a :class:`Settings` instance
-   is supplied — a :class:`~core.ports.catalog_store.CatalogStore` plus a
-   lazy hook for the eventual vector store.
+   is supplied — a :class:`~core.ports.catalog_store.CatalogStore` and a
+   :class:`~core.vector_stores.VectorStore`.
 3. Owns the async :meth:`initialize` / :meth:`shutdown` lifecycle that opens
    and closes the asyncpg pool.
 
@@ -73,6 +73,9 @@ class ServiceContainer:
         self._catalog_store: CatalogStore | None = (
             create_catalog_store(settings) if settings is not None else None
         )
+        self._vector_store: VectorStore | None = (
+            create_vector_store(settings) if settings is not None else None
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -100,16 +103,15 @@ class ServiceContainer:
 
     @property
     def vector_store(self) -> VectorStore:
-        """Resolve the vector store adapter.
+        """The Phase 7B :class:`MilvusVectorStore` built from settings.
 
-        Phase 7B fills in the body of :func:`create_vector_store`; until
-        then this raises :class:`NotImplementedError` so callers fail fast
-        rather than getting an abstract-class error from the placeholder
-        ``MilvusStore``.
+        Cached at construction so repeated property reads return the same
+        instance — every fresh build would open a new pymilvus gRPC
+        channel.
         """
-        if self._settings is None:
+        if self._vector_store is None:
             raise RuntimeError(_NO_SETTINGS_MESSAGE)
-        return create_vector_store(self._settings)
+        return self._vector_store
 
     # ------------------------------------------------------------------
     # Per-repo accessors (Phase 8 orchestrators take one repo, not the

@@ -982,22 +982,24 @@ so DI wiring code never mentions the prefix; an explicit
   is happy taking just `RDBConfig` today and shouldn't have to grow a
   `vectordb` parameter to learn the collection name.
 
-**3. Wrote `create_vector_store` as a fail-loud stub now, not a Phase 7B
-TODO.**
-Phase 7E depends on 7B per the plan, but 7B is not yet landed. Rather
-than leave the vector store unwired entirely, the factory exists with
-the right signature (`(settings: Settings) -> VectorStore`) and raises
-`NotImplementedError("create_vector_store() is a Phase 7B
-deliverable...")` at the body. Phase 7B's diff becomes a single-method
-body replacement; orchestrators that import the symbol today already
-get the right error message at runtime.
-- Why: keeps the public DI surface stable across the Phase 7B boundary
-  — Phase 8 code can import `create_vector_store` now even if it
-  cannot yet call it.
-- Alternative considered: omit the factory until 7B lands. Rejected —
-  the `ServiceContainer.vector_store` property has to point at
-  *something* for tests; routing it through a documented stub is
-  clearer than no symbol at all.
+**3. `create_vector_store` wires to the real `MilvusVectorStore` (Phase 7B)
+in this same branch.**
+The factory was first drafted as a fail-loud stub (`raise
+NotImplementedError("Phase 7B deliverable")`) so 7E could land
+independently of 7B. With 7B already on the branch when 7E was
+rebased, the factory's body swapped to its final shape: `return
+MilvusVectorStore(settings.vectordb)`. Construction stays I/O-free
+and embedder-free; the composition root resolves the embedder and
+calls `await store.initialize(embedding_dimension)` later, matching
+the lifecycle pattern :class:`PostgresStore` already follows.
+- Why: keeps the DI factory shape stable across the 7B handoff —
+  no caller has to know whether 7B was merged first. The lazy
+  `initialize(dim)` keeps the construction step out of any async
+  context and avoids a circular dependency on the embedder factory.
+- Alternative considered: pass the embedder dimension into the
+  factory itself. Rejected — forces every test/composition root to
+  resolve the embedder before the store, defeating the construct-
+  cheap / materialise-async split that the Phase 7B store relies on.
 
 **4. Aligned `services/persistence/` and `services/storage/` imports
 to the project's short-form convention (`from core.X`, not
@@ -1058,11 +1060,23 @@ one loop, which is also what asyncpg expects.
   Rejected — every test would pay the connection-establishment cost,
   inflating the suite from ~5s to easily 30s+.
 
-**4. `tests/integration/test_stores.py` is `xfail(strict=True)` until Phase 7B is wired through DI.**
+**4. `tests/integration/test_stores.py` is `xfail(strict=True)` until the
+cross-store fixture lands in Phase 7C.**
 The Phase 7F plan calls for a cross-store full-cycle test
-(`create partition → upsert chunks → search → delete`). Phase 7B has landed `MilvusVectorStore` on this branch, but the DI factory `create_vector_store` was not yet returning the real store at the time this test file was written; the test stayed `xfail(strict=True)` so the day the DI wiring flips, the test going green automatically trips a failure that prompts the author to remove the marker — no silent passes.
-- Why: the file exists so the eventual diff is just a body replacement. The strict marker prevents "forgot to remove xfail" rot.
-- Alternative considered: skip with `pytest.skip(...)` or leave the file out entirely. Rejected — skips are too easy to forget, and an absent file means the cross-store test has to remember to be created.
+(`create partition → upsert pre-embedded chunks → search → delete`).
+:class:`MilvusVectorStore` is in place (Phase 7B) and reachable through
+DI, but the existing `postgres_store` fixture does not yet hand out a
+companion Milvus store on the same collection — the combined fixture
+lands as part of Phase 7C (shim) so the assertion matches the legacy
+flow byte-for-byte. The strict marker means the day the fixture is
+wired and the body filled in, the unintended pass trips a clear
+failure rather than silently turning green.
+- Why: the file exists so the eventual diff is just a fixture + body
+  replacement. Strict xfail prevents "forgot to remove xfail" rot.
+- Alternative considered: skip with `pytest.skip(...)` or leave the
+  file out entirely. Rejected — skips are too easy to forget, and an
+  absent file means the cross-store test has to remember to be
+  created.
 
 **5. Fixed two bugs surfaced by writing the tests, in the same diff.**
 The integration suite caught two tz-naive/tz-aware mismatches in code
