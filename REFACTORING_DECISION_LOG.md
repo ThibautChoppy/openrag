@@ -833,6 +833,74 @@ every parameter write.
 
 ---
 
+## Phase 7A.3 — PostgresStore composite (2026-05-13)
+
+**1. Placed `PostgresStore` in `services/storage/`, not alongside the
+repositories in `services/persistence/`.**
+The "storage" tier owns the high-level adapters that the rest of the
+system depends on (`MilvusStore`, `PostgresStore`); "persistence" owns
+the row-level repository implementations. Phase 8 orchestrators only
+ever import from `storage` — they never reach into individual repo
+modules. Keeping the composite outside `persistence/` makes that
+boundary visible in the import graph.
+- Why: the phase 7 plan explicitly names this split and it matches the
+  already-existing `services/storage/milvus_store.py` placeholder. A
+  future reader can tell the layers apart by directory.
+- Alternative considered: `services/persistence/postgres_store.py`.
+  Rejected — would conflate the composite with its parts and force the
+  shim/orchestrators to import from `persistence/`, defeating the
+  point of the directory split.
+
+**2. Eagerly construct all fifteen repos in `__init__`; share one
+`pool_getter` callable across them.**
+Repos do not touch the pool until a query runs, so building them at
+construction time is free and saves every caller from a lazy-init
+dance. Passing a `_pool_getter` bound method (instead of the raw pool
+reference) lets the store survive a `shutdown()`/`initialize()` cycle
+in tests — repos always see the live pool.
+- Why: matches the pool-getter pattern established in 7A.1 and keeps
+  test fixtures simple (rebuild the store, not the repos).
+- Alternative considered: build repos lazily on first property access.
+  Rejected — extra branching with no measurable win, and the property
+  getter would lose its read-only character.
+
+**3. `initialize()` opens the pool *then* runs migrations; both behind
+a single entry point.**
+The legacy ORM bootstrapped tables synchronously via
+`Base.metadata.create_all` before Alembic ever ran, which is why every
+Phase 7 migration is idempotent (CLAUDE.md "Alembic Migration
+Idempotency"). The composite keeps that ordering so the DI container
+calls `await store.initialize()` once and gets a ready-to-query store.
+A `run_migrations=False` flag is provided for fast unit tests against
+an already-migrated database.
+- Why: hiding the two-step lifecycle behind one method keeps the
+  Phase 7E container wiring identical to the inference adapters and
+  matches the `CatalogStore` ABC contract (one `initialize`, one
+  `shutdown`).
+- Alternative considered: expose `run_migrations()` separately and
+  require the container to call both. Rejected — leaks an
+  implementation detail across the layer boundary and makes every
+  composition-root harder to write.
+
+**4. Expose the raw asyncpg pool as a `pool` property on the concrete
+class, not on the `CatalogStore` ABC.**
+Phase 8 orchestrators need cross-repo transactions
+(`async with store.pool.acquire() as conn: async with conn.transaction(): ...`).
+That capability is not on the ABC because most consumers do single-repo
+calls; adding it to the port would invite leaks of asyncpg specifics
+into orchestrator code that doesn't need them. Concrete clients that
+truly need transactional escape hatches can depend on `PostgresStore`
+directly.
+- Why: keeps the ABC minimal while still unlocking the transaction
+  pattern. Phase 8 will decide whether to formalise a
+  `UnitOfWork`-style port; until then the escape hatch is explicit and
+  grep-findable (`grep -rn "store.pool"`).
+- Alternative considered: add a `pool` property to `CatalogStore`.
+  Rejected — turns the ABC into an asyncpg-shaped interface and makes
+  it harder to swap in a non-Postgres backend (e.g. SQLite for tests).
+
+---
+
 ## Phase 7B — Milvus vector store (2026-05-12)
 
 **1. `VectorStore.search` stays embedding-only; hybrid is a Milvus-specific method on the concrete store.**
@@ -883,9 +951,6 @@ The constant exists identically in both modules right now (the new store copied 
 The project today has tests in two places: colocated `openrag/**/test_*.py` (the long-standing convention) and `tests/api_tests/` (HTTP-style black-box tests against a running OpenRAG server). STRATEGY §13C describes a target end-state of `tests/{unit,integration,load}/` with everything under one root. 7F lands integration tests now; the unified layout doesn't arrive until Phase 13C.
 - Why: Integration tests for `MilvusVectorStore` need to escape `pytest.ini`'s `testpaths = openrag` so a bare `uv run pytest` (the default unit run) does not drive real infrastructure. The cleanest interim home is exactly where Phase 13C will park them anyway — `tests/integration/` — so the file lands once and does not need to move during the sweep.
 - Alternative considered: (a) park integration tests under `tests/api_tests/` to match the existing infra-test sibling layout. Rejected — `api_tests/` is HTTP-API-style by convention (httpx against a running server); adapter-level integration tests don't fit that mould, and the strategy doc has already settled the end-state location. (b) keep them colocated and rely on the `integration` pytest marker for deselection. Rejected — relies on every CI invocation remembering `-m "not integration"` and still pulls pymilvus/Postgres imports into the default unit run.
-
----
-
 ## Template for future entries
 
 ```
