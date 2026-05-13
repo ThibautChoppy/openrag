@@ -70,12 +70,8 @@ class ServiceContainer:
         register_vlms()
 
         self._settings = settings
-        self._catalog_store: CatalogStore | None = (
-            create_catalog_store(settings) if settings is not None else None
-        )
-        self._vector_store: VectorStore | None = (
-            create_vector_store(settings) if settings is not None else None
-        )
+        self._catalog_store: CatalogStore | None = create_catalog_store(settings) if settings is not None else None
+        self._vector_store: VectorStore | None = create_vector_store(settings) if settings is not None else None
 
     # ------------------------------------------------------------------
     # Lifecycle

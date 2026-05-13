@@ -85,8 +85,7 @@ async def _ensured_test_database() -> str:
     admin = await _connect_admin()
     if admin is None:
         pytest.skip(
-            f"Postgres unreachable at {_admin_dsn()}; "
-            "set POSTGRES_TEST_ADMIN_DSN or start the rdb container.",
+            f"Postgres unreachable at {_admin_dsn()}; set POSTGRES_TEST_ADMIN_DSN or start the rdb container.",
         )
     try:
         await _drop_test_database(admin)

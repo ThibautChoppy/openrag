@@ -219,7 +219,7 @@ class PgUserRepository(UserRepository):
             assignment.partition,
             assignment.user_id,
             assignment.role.value,
-            )
+        )
         row = await self.pool.fetchrow(
             """
             SELECT * FROM partition_memberships

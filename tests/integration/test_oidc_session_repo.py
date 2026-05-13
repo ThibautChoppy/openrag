@@ -77,10 +77,7 @@ class TestCreateGet:
         await postgres_store.oidc_session_repo.create_session(
             _session(user.id, token_hash="hash-revoked", revoked=True),
         )
-        assert (
-            await postgres_store.oidc_session_repo.get_by_token_hash("hash-revoked")
-            is None
-        )
+        assert await postgres_store.oidc_session_repo.get_by_token_hash("hash-revoked") is None
 
     async def test_expired_session_hidden_from_lookup(
         self,
@@ -90,10 +87,7 @@ class TestCreateGet:
         await postgres_store.oidc_session_repo.create_session(
             _session(user.id, token_hash="hash-expired", expires_in=timedelta(seconds=-60)),
         )
-        assert (
-            await postgres_store.oidc_session_repo.get_by_token_hash("hash-expired")
-            is None
-        )
+        assert await postgres_store.oidc_session_repo.get_by_token_hash("hash-expired") is None
 
 
 class TestRevoke:
@@ -107,17 +101,13 @@ class TestRevoke:
         )
         count = await postgres_store.oidc_session_repo.revoke_by_sid("shared-sid")
         assert count == 2
-        assert (
-            await postgres_store.oidc_session_repo.get_by_token_hash("t1") is None
-        )
+        assert await postgres_store.oidc_session_repo.get_by_token_hash("t1") is None
 
     async def test_revoke_by_sid_missing_returns_zero(
         self,
         postgres_store: PostgresStore,
     ):
-        assert (
-            await postgres_store.oidc_session_repo.revoke_by_sid("never") == 0
-        )
+        assert await postgres_store.oidc_session_repo.revoke_by_sid("never") == 0
 
     async def test_revoke_by_user(self, postgres_store: PostgresStore):
         user = await _seed_user(postgres_store)
@@ -126,9 +116,7 @@ class TestRevoke:
         )
         revoked = await postgres_store.oidc_session_repo.revoke_by_user(user.id)
         assert revoked == 1
-        assert (
-            await postgres_store.oidc_session_repo.get_by_token_hash("u-t1") is None
-        )
+        assert await postgres_store.oidc_session_repo.get_by_token_hash("u-t1") is None
 
 
 class TestExpiry:

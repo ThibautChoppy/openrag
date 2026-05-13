@@ -368,7 +368,7 @@ class PgDocumentRepository(DocumentRepository):
         params.extend([file_id, partition])
         result = await self.pool.execute(
             f"""
-            UPDATE files SET {', '.join(sets)}
+            UPDATE files SET {", ".join(sets)}
             WHERE file_id = ${len(params) - 1} AND partition_name = ${len(params)}
             """,
             *params,
@@ -408,7 +408,7 @@ class PgDocumentRepository(DocumentRepository):
         params.extend([file_id, partition])
         result = await self.pool.execute(
             f"""
-            UPDATE files SET {', '.join(sets)}
+            UPDATE files SET {", ".join(sets)}
             WHERE file_id = ${len(params) - 1} AND partition_name = ${len(params)}
             """,
             *params,
