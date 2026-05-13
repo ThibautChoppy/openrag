@@ -84,10 +84,17 @@ class PgPartitionRepository(PartitionRepository):
         return [self._row_to_dict(r) for r in rows]
 
     async def delete_partition(self, name: str) -> bool:
-        """Delete a partition + cascade files/memberships/workspaces.
+        """Delete a partition + its files, memberships, and workspaces.
 
-        Mirrors the legacy bookkeeping: before the cascade we count files
-        per uploader and decrement each uploader's ``file_count`` by that
+        ``files.partition_name`` has no ``ON DELETE CASCADE`` (the legacy
+        ORM relied on SQLAlchemy's Python-side cascade), so we delete file
+        rows explicitly before the partition. ``workspace_files.file_id``
+        cascades, so workspace links clean up with the files.
+        ``partition_memberships`` and ``workspaces`` cascade from the
+        partition row.
+
+        Mirrors the legacy bookkeeping: before deleting we count files per
+        uploader and decrement each uploader's ``file_count`` by that
         amount (clamped at zero) so quotas stay accurate.
         """
         async with self.pool.acquire() as conn:
@@ -105,6 +112,10 @@ class PgPartitionRepository(PartitionRepository):
                     WHERE partition_name = $1 AND created_by IS NOT NULL
                     GROUP BY created_by
                     """,
+                    name,
+                )
+                await conn.execute(
+                    "DELETE FROM files WHERE partition_name = $1",
                     name,
                 )
                 await conn.execute(

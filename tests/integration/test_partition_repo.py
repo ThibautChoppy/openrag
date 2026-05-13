@@ -61,3 +61,38 @@ class TestDelete:
     async def test_delete_missing_returns_false(self, postgres_store: PostgresStore):
         repo = postgres_store.partition_repo
         assert await repo.delete_partition("ghost") is False
+
+    async def test_delete_cascades_files_and_decrements_uploader_count(
+        self,
+        postgres_store: PostgresStore,
+    ):
+        """Regression: ``files.partition_name`` has no DB-level CASCADE, so the
+        repo must delete file rows itself before dropping the partition. Also
+        verifies the per-uploader ``file_count`` decrement.
+        """
+        partition_repo = postgres_store.partition_repo
+        document_repo = postgres_store.document_repo
+        user_repo = postgres_store.user_repo
+
+        uploader = await user_repo.create_legacy_user(display_name="Uploader")
+        uploader_id = uploader["id"]
+
+        await partition_repo.create_partition("cascade-me")
+        await document_repo.add_file_to_partition(
+            file_id="f1",
+            partition="cascade-me",
+            user_id=uploader_id,
+        )
+        await document_repo.add_file_to_partition(
+            file_id="f2",
+            partition="cascade-me",
+            user_id=uploader_id,
+        )
+        assert await partition_repo.get_partition_file_count("cascade-me") == 2
+
+        assert await partition_repo.delete_partition("cascade-me") is True
+
+        assert await partition_repo.partition_exists("cascade-me") is False
+        assert await partition_repo.get_partition_file_count("cascade-me") == 0
+        refreshed = await user_repo.get_user_dict_by_id(uploader_id)
+        assert refreshed["file_count"] == 0
