@@ -765,6 +765,15 @@ The constant exists identically in both modules right now (the new store copied 
 
 ---
 
+## Phase 7F — Integration test layout (2026-05-13)
+
+**1. Integration tests land at `tests/integration/`, not colocated with the SUT and not under `tests/api_tests/`.**
+The project today has tests in two places: colocated `openrag/**/test_*.py` (the long-standing convention) and `tests/api_tests/` (HTTP-style black-box tests against a running OpenRAG server). STRATEGY §13C describes a target end-state of `tests/{unit,integration,load}/` with everything under one root. 7F lands integration tests now; the unified layout doesn't arrive until Phase 13C.
+- Why: Integration tests for `MilvusVectorStore` need to escape `pytest.ini`'s `testpaths = openrag` so a bare `uv run pytest` (the default unit run) does not drive real infrastructure. The cleanest interim home is exactly where Phase 13C will park them anyway — `tests/integration/` — so the file lands once and does not need to move during the sweep.
+- Alternative considered: (a) park integration tests under `tests/api_tests/` to match the existing infra-test sibling layout. Rejected — `api_tests/` is HTTP-API-style by convention (httpx against a running server); adapter-level integration tests don't fit that mould, and the strategy doc has already settled the end-state location. (b) keep them colocated and rely on the `integration` pytest marker for deselection. Rejected — relies on every CI invocation remembering `-m "not integration"` and still pulls pymilvus/Postgres imports into the default unit run.
+
+---
+
 ## Template for future entries
 
 ```
