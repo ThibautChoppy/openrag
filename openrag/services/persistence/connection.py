@@ -18,6 +18,7 @@ manager is reinitialised in tests.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,6 +38,27 @@ _ALEMBIC_INI = _MIGRATIONS_DIR / "alembic.ini"
 _RETRY_ATTEMPTS = 5
 _RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRY_MAX_DELAY_SECONDS = 16.0
+
+
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Per-connection init: decode ``json`` / ``jsonb`` columns into Python.
+
+    asyncpg returns JSON values as strings by default. Repositories prefer
+    receiving dicts so they don't have to ``json.loads`` every row read; we
+    register codecs for both flavours so the column type doesn't matter.
+    """
+    await conn.set_type_codec(
+        "json",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
 
 
 class ConnectionManager:
@@ -81,6 +103,7 @@ class ConnectionManager:
                     min_size=self._min_size,
                     max_size=self._max_size,
                     command_timeout=self._command_timeout,
+                    init=_init_connection,
                 )
                 logger.info(
                     "Connected to Postgres at %s (pool=%d..%d)",

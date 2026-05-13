@@ -22,6 +22,7 @@ from .preset_repo import PresetRepository
 from .prompt_repo import PromptRepository
 from .topic_tag_repo import TopicTagRepository
 from .user_repo import UserRepository
+from .workspace_repo import WorkspaceRepository
 
 
 class CatalogStore(ABC):
@@ -91,3 +92,7 @@ class CatalogStore(ABC):
     @property
     @abstractmethod
     def oidc_session_repo(self) -> OIDCSessionRepository: ...
+
+    @property
+    @abstractmethod
+    def workspace_repo(self) -> WorkspaceRepository: ...

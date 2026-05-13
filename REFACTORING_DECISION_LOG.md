@@ -721,6 +721,118 @@ runtime behaviour.
 
 ---
 
+## Phase 7A.2 — Repository implementations (2026-05-12)
+
+**1. Added a `WorkspaceRepository` port + `Workspace` domain model.**
+The Phase-4 ports list had no workspace abstraction even though the
+Phase-7 spec explicitly enumerates `workspace_repo.py` as one of the six
+"real" repos with ten methods extracted from `PartitionFileManager`.
+Added `core/ports/workspace_repo.py`, `core/models/workspace.py`, and
+exposed `CatalogStore.workspace_repo`.
+- Why: skipping it would leave the `workspaces` + `workspace_files`
+  tables strictly addressable only through the shim, defeating Phase
+  8's point (orchestrators talk to ports, not the legacy actor). The
+  legacy code's workspace surface is non-trivial (orphan-file
+  detection, partition-scoped FK resolution) — it needs a first-class
+  port.
+- Alternative considered: fold workspace methods into `DocumentRepository`
+  or `PartitionRepository`. Rejected — workspaces are a distinct
+  aggregate (their own row + join table) and conflating them blurs the
+  responsibility split that the rest of the ports layer enforces.
+
+**2. Extended `OIDCSession` domain model with three optional `bytes` fields
+for the encrypted IdP tokens.**
+The Phase-4 model had `id`, `session_token_hash`, `user_id`, `sid`,
+`sub`, two timestamps, `last_refresh_at`, `revoked_at` — no token
+fields. The port `create_session(session: OIDCSession) -> OIDCSession`
+must convey what to store, so omitting them was a port-shape bug.
+Added `id_token_encrypted`, `access_token_encrypted`,
+`refresh_token_encrypted` as `bytes | None`.
+- Why: the auth layer (Phase 6F) encrypts tokens before storage and
+  decrypts after read; the repo is intentionally byte-blind. Domain
+  models that hide load-bearing storage fields force callers to
+  bypass the port (e.g. with separate `set_tokens()` calls), defeating
+  the point of the typed contract. The "encrypted blobs flow through
+  the model verbatim" pattern is the same one the legacy
+  `_oidc_session_to_dict()` already uses.
+- Alternative considered: an internal `OIDCSessionWithTokens` model
+  used only at the repo boundary. Rejected — duplicating models for
+  the sake of pretending the encrypted bytes aren't part of the
+  session is structural noise; Phase 8 callers don't read those
+  fields anyway.
+
+**3. Concrete repos expose two parallel surfaces: ABC methods + legacy
+method names — both writing to the same rows.**
+Each `Pg<Entity>Repository` implements the Phase-4 port ABC verbatim
+(typed domain models in, typed domain models out) AND carries every
+legacy `PartitionFileManager` method name with its original signature
+and return shape (positional args, dict returns) as separate methods
+marked `# TODO(phase-9): remove`. The legacy methods are NOT on the ABC.
+- Why: Phase 8 orchestrators consume the port; Phase 7C shim must
+  delegate to the existing 76 call sites without rewriting them. A
+  single typed surface would force the shim to translate at every
+  call boundary, multiplying the change set and the regression
+  surface. Two surfaces on the same underlying SQL keeps both clients
+  happy with zero behavioural drift. Phase 9 deletes the legacy
+  surface after the shim goes away.
+- Alternative considered: legacy method names only, postpone the
+  typed port to Phase 8. Rejected — the typed port is what makes the
+  ports/adapters split testable from `core/` unit tests; doing it now
+  is the cheap moment.
+
+**4. `users.password_hash`, `users.is_active`, `users.updated_at` exist on
+the `User` domain model but not on the schema; mapped to defaults at the
+repo boundary.**
+The Phase-4 `User` model documents three auth modes (OIDC, token,
+password+JWT) so it carries `password_hash`. The current schema only
+supports OIDC + token. The user_repo silently drops `password_hash` on
+write and synthesises `is_active=True` / `updated_at=created_at` on
+read.
+- Why: the alternative is dropping fields from the domain model, but
+  password auth is a planned post-refactoring feature on the roadmap.
+  Keeping the model field-complete means the orchestrator code can
+  be written once and only the repo updates when the column lands.
+- Alternative considered: add the missing columns now via a new
+  Alembic migration. Rejected — Phase 7 is a structural refactor, not
+  a feature expansion. Adding columns expands scope past the spec.
+
+**5. Api-key repository methods raise `NotImplementedError`; stub repos
+raise a `StubRepositoryError(NotImplementedError)` subclass.**
+The `UserRepository.create_api_key` / `get_api_keys_by_prefix` /
+`list_api_keys_for_user` / `delete_api_key` methods have no backing
+table (`users.token` is a single-token field). Six entire ports
+(`ChunkRepository`, `JobRepository`, `PromptRepository`,
+`ConversationRepository`, `AuditLogRepository`,
+`IdempotencyRepository`) plus four extras (`EntityRepository`,
+`TopicTagRepository`, `ModelEndpointRepository`, `PresetRepository`)
+are full-class stubs.
+- Why: a silent fallback (empty list / `None`) is worse than an
+  exception — an orchestrator that retrieves zero rows from a "doesn't
+  exist yet" repo behaves indistinguishably from a real empty repo,
+  hiding bugs. The dedicated `StubRepositoryError` subclass is loudly
+  grep-findable (`grep -rn stub_not_implemented`) when the
+  post-refactoring features come online.
+- Alternative considered: leave the stub ports unimplemented (no Pg
+  classes at all). Rejected — `CatalogStore` requires every port via
+  abstract properties; a partial implementation can't satisfy the
+  ABC, so Phase 7A.3 (composite store) wouldn't even instantiate.
+
+**6. Registered `json` / `jsonb` codecs on every connection via the
+asyncpg `init` callback so reads return Python dicts.**
+The legacy schema stores `files.file_metadata` as `JSON`; asyncpg
+returns JSON columns as strings by default. Without the codec every
+repo would have to `json.loads()` every row read and `json.dumps()`
+every parameter write.
+- Why: one place to register, repos stay focused on SQL. The codec
+  also covers `jsonb` so future migrations from `JSON` to `JSONB`
+  don't ripple into repo code.
+- Alternative considered: per-call `json.loads()` / `json.dumps()` in
+  each repo. Rejected — duplicate boilerplate per repo, easy to forget
+  in one spot. The connection-level codec is the asyncpg-recommended
+  pattern.
+
+---
+
 ## Phase 7B — Milvus vector store (2026-05-12)
 
 **1. `VectorStore.search` stays embedding-only; hybrid is a Milvus-specific method on the concrete store.**

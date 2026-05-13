@@ -15,6 +15,7 @@ from .preset_repo import PresetRepository
 from .prompt_repo import PromptRepository
 from .topic_tag_repo import TopicTagRepository
 from .user_repo import UserRepository
+from .workspace_repo import WorkspaceRepository
 
 __all__ = [
     "AuditLogRepository",
@@ -32,4 +33,5 @@ __all__ = [
     "PromptRepository",
     "TopicTagRepository",
     "UserRepository",
+    "WorkspaceRepository",
 ]

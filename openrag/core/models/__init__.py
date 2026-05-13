@@ -10,6 +10,7 @@ from .query import Query, RetrievalQuery, SearchQueries, TemporalPredicate
 from .retrieval_response import RetrievalResponse
 from .retrieval_result import RetrievalResult, ScoredChunk
 from .user import ApiKey, OIDCSession, PartitionRole, TokenPayload, User, UserPartition
+from .workspace import Workspace
 
 __all__ = [
     "ApiKey",
@@ -41,4 +42,5 @@ __all__ = [
     "TokenPayload",
     "User",
     "UserPartition",
+    "Workspace",
 ]
