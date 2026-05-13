@@ -155,7 +155,7 @@ class LocalWhisperLoader(BasePooledParser):
 
         async with document.as_temporary_file() as path:
             try:
-                text = await ray.get(self.whisper_actor.transcribe.remote(str(path)))
+                text = await self.whisper_actor.transcribe.remote(str(path))
             except Exception as e:
                 logger.error("Error transcribing audio", error=str(e))
                 raise
