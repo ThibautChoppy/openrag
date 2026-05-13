@@ -26,43 +26,42 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from openrag.core.ports.catalog_store import CatalogStore
-from openrag.services.persistence.audit_log_repo import PgAuditLogRepository
-from openrag.services.persistence.chunk_repo import PgChunkRepository
-from openrag.services.persistence.connection import ConnectionManager
-from openrag.services.persistence.conversation_repo import PgConversationRepository
-from openrag.services.persistence.document_repo import PgDocumentRepository
-from openrag.services.persistence.entity_repo import PgEntityRepository
-from openrag.services.persistence.idempotency_repo import PgIdempotencyRepository
-from openrag.services.persistence.job_repo import PgJobRepository
-from openrag.services.persistence.model_endpoint_repo import PgModelEndpointRepository
-from openrag.services.persistence.oidc_session_repo import PgOIDCSessionRepository
-from openrag.services.persistence.partition_repo import PgPartitionRepository
-from openrag.services.persistence.preset_repo import PgPresetRepository
-from openrag.services.persistence.prompt_repo import PgPromptRepository
-from openrag.services.persistence.topic_tag_repo import PgTopicTagRepository
-from openrag.services.persistence.user_repo import PgUserRepository
-from openrag.services.persistence.workspace_repo import PgWorkspaceRepository
+from core.ports.catalog_store import CatalogStore
+from services.persistence.audit_log_repo import PgAuditLogRepository
+from services.persistence.chunk_repo import PgChunkRepository
+from services.persistence.connection import ConnectionManager
+from services.persistence.conversation_repo import PgConversationRepository
+from services.persistence.document_repo import PgDocumentRepository
+from services.persistence.entity_repo import PgEntityRepository
+from services.persistence.idempotency_repo import PgIdempotencyRepository
+from services.persistence.job_repo import PgJobRepository
+from services.persistence.model_endpoint_repo import PgModelEndpointRepository
+from services.persistence.oidc_session_repo import PgOIDCSessionRepository
+from services.persistence.partition_repo import PgPartitionRepository
+from services.persistence.preset_repo import PgPresetRepository
+from services.persistence.prompt_repo import PgPromptRepository
+from services.persistence.topic_tag_repo import PgTopicTagRepository
+from services.persistence.user_repo import PgUserRepository
+from services.persistence.workspace_repo import PgWorkspaceRepository
 
 if TYPE_CHECKING:
     import asyncpg
-
-    from openrag.core.config.infrastructure import RDBConfig
-    from openrag.core.ports.audit_log_repo import AuditLogRepository
-    from openrag.core.ports.chunk_repo import ChunkRepository
-    from openrag.core.ports.conversation_repo import ConversationRepository
-    from openrag.core.ports.document_repo import DocumentRepository
-    from openrag.core.ports.entity_repo import EntityRepository
-    from openrag.core.ports.idempotency_repo import IdempotencyRepository
-    from openrag.core.ports.job_repo import JobRepository
-    from openrag.core.ports.model_endpoint_repo import ModelEndpointRepository
-    from openrag.core.ports.oidc_session_repo import OIDCSessionRepository
-    from openrag.core.ports.partition_repo import PartitionRepository
-    from openrag.core.ports.preset_repo import PresetRepository
-    from openrag.core.ports.prompt_repo import PromptRepository
-    from openrag.core.ports.topic_tag_repo import TopicTagRepository
-    from openrag.core.ports.user_repo import UserRepository
-    from openrag.core.ports.workspace_repo import WorkspaceRepository
+    from core.config.infrastructure import RDBConfig
+    from core.ports.audit_log_repo import AuditLogRepository
+    from core.ports.chunk_repo import ChunkRepository
+    from core.ports.conversation_repo import ConversationRepository
+    from core.ports.document_repo import DocumentRepository
+    from core.ports.entity_repo import EntityRepository
+    from core.ports.idempotency_repo import IdempotencyRepository
+    from core.ports.job_repo import JobRepository
+    from core.ports.model_endpoint_repo import ModelEndpointRepository
+    from core.ports.oidc_session_repo import OIDCSessionRepository
+    from core.ports.partition_repo import PartitionRepository
+    from core.ports.preset_repo import PresetRepository
+    from core.ports.prompt_repo import PromptRepository
+    from core.ports.topic_tag_repo import TopicTagRepository
+    from core.ports.user_repo import UserRepository
+    from core.ports.workspace_repo import WorkspaceRepository
 
 
 class PostgresStore(CatalogStore):

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from openrag.core.models.catalog import IndexationJob
-from openrag.core.ports.job_repo import JobRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.models.catalog import IndexationJob
+from core.ports.job_repo import JobRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgJobRepository(_StubRepositoryBase, JobRepository):

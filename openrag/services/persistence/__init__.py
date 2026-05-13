@@ -20,24 +20,24 @@ Public entry points:
             ``PgModelEndpointRepository``, ``PgPresetRepository``.
 """
 
-from openrag.services.persistence._stubs import StubRepositoryError
-from openrag.services.persistence.audit_log_repo import PgAuditLogRepository
-from openrag.services.persistence.chunk_repo import PgChunkRepository
-from openrag.services.persistence.connection import ConnectionManager
-from openrag.services.persistence.conversation_repo import PgConversationRepository
-from openrag.services.persistence.document_repo import PgDocumentRepository
-from openrag.services.persistence.entity_repo import PgEntityRepository
-from openrag.services.persistence.idempotency_repo import PgIdempotencyRepository
-from openrag.services.persistence.job_repo import PgJobRepository
-from openrag.services.persistence.model_endpoint_repo import PgModelEndpointRepository
-from openrag.services.persistence.oidc_session_repo import PgOIDCSessionRepository
-from openrag.services.persistence.partition_repo import PgPartitionRepository
-from openrag.services.persistence.preset_repo import PgPresetRepository
-from openrag.services.persistence.prompt_repo import PgPromptRepository
-from openrag.services.persistence.schema import metadata
-from openrag.services.persistence.topic_tag_repo import PgTopicTagRepository
-from openrag.services.persistence.user_repo import PgUserRepository
-from openrag.services.persistence.workspace_repo import PgWorkspaceRepository
+from services.persistence._stubs import StubRepositoryError
+from services.persistence.audit_log_repo import PgAuditLogRepository
+from services.persistence.chunk_repo import PgChunkRepository
+from services.persistence.connection import ConnectionManager
+from services.persistence.conversation_repo import PgConversationRepository
+from services.persistence.document_repo import PgDocumentRepository
+from services.persistence.entity_repo import PgEntityRepository
+from services.persistence.idempotency_repo import PgIdempotencyRepository
+from services.persistence.job_repo import PgJobRepository
+from services.persistence.model_endpoint_repo import PgModelEndpointRepository
+from services.persistence.oidc_session_repo import PgOIDCSessionRepository
+from services.persistence.partition_repo import PgPartitionRepository
+from services.persistence.preset_repo import PgPresetRepository
+from services.persistence.prompt_repo import PgPromptRepository
+from services.persistence.schema import metadata
+from services.persistence.topic_tag_repo import PgTopicTagRepository
+from services.persistence.user_repo import PgUserRepository
+from services.persistence.workspace_repo import PgWorkspaceRepository
 
 __all__ = [
     "ConnectionManager",

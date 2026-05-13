@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import asyncpg
 
 if TYPE_CHECKING:
-    from openrag.core.config.infrastructure import RDBConfig
+    from core.config.infrastructure import RDBConfig
 
 
 logger = logging.getLogger(__name__)

@@ -7,8 +7,8 @@ today.
 
 from __future__ import annotations
 
-from openrag.core.ports.topic_tag_repo import TopicTagRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.topic_tag_repo import TopicTagRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgTopicTagRepository(_StubRepositoryBase, TopicTagRepository):

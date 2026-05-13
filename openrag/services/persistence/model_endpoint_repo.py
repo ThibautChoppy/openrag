@@ -8,8 +8,8 @@ operators can repoint endpoints from an admin UI.
 
 from __future__ import annotations
 
-from openrag.core.ports.model_endpoint_repo import ModelEndpointRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.model_endpoint_repo import ModelEndpointRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgModelEndpointRepository(_StubRepositoryBase, ModelEndpointRepository):

@@ -23,8 +23,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from openrag.core.models.workspace import Workspace
-from openrag.core.ports.workspace_repo import WorkspaceRepository
+from core.models.workspace import Workspace
+from core.ports.workspace_repo import WorkspaceRepository
 
 if TYPE_CHECKING:
     import asyncpg

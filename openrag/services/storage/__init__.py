@@ -15,6 +15,6 @@ The Ray actor that callers know today lives at
 new stores during Phase 7C.
 """
 
-from openrag.services.storage.postgres_store import PostgresStore
+from services.storage.postgres_store import PostgresStore
 
 __all__ = ["PostgresStore"]

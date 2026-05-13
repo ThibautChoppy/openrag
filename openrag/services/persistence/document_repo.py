@@ -25,8 +25,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from openrag.core.models.catalog import DocumentRecord, DocumentStatus
-from openrag.core.ports.document_repo import DocumentRepository
+from core.models.catalog import DocumentRecord, DocumentStatus
+from core.ports.document_repo import DocumentRepository
 
 if TYPE_CHECKING:
     import asyncpg

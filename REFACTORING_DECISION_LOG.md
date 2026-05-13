@@ -945,6 +945,83 @@ The constant exists identically in both modules right now (the new store copied 
 
 ---
 
+## Phase 7E — DI wiring (2026-05-13)
+
+**1. Made `ServiceContainer(settings=None)` optional so the pre-Phase-7E
+test paths keep working.**
+The container's pre-existing job was to populate inference registries
+(`ServiceContainer()` with no arguments). Phase 7E adds storage adapter
+wiring that needs a `Settings` instance, but rewriting every legacy
+test to pass settings is busy-work and risks scope creep. The settings
+argument is therefore optional; the storage accessors raise a clear
+`RuntimeError` ("ServiceContainer was constructed without a Settings
+instance — pass Settings to wire storage adapters") when reached
+without one.
+- Why: keeps the Phase 7E commit a strict superset of the previous
+  container behaviour and surfaces the misuse with a message that
+  points at the fix.
+- Alternative considered: split into `ServiceContainer` (registries
+  only) and `AppContainer(settings)` (registries + storage). Rejected
+  — Phase 8 orchestrators will pull both layers from one container,
+  and a hard split now would invite a refactor at the very next phase.
+
+**2. Centralised the "database name from collection name" idiom in
+`create_catalog_store`.**
+The legacy `MilvusDB.__init__` derives the Postgres database name from
+the Milvus collection name (`partitions_for_collection_<name>`,
+vectordb.py:238). That contract is duplicated in `scripts/backup.py`,
+`scripts/restore.py`, `scripts/check_file_counts.py`, and the new
+Alembic `env.py`. The Phase 7E factory keeps the fallback in one place
+so DI wiring code never mentions the prefix; an explicit
+`rdb.database` still wins.
+- Why: the database name resolution is policy, not orchestrator code
+  — putting it in the factory keeps `di/container.py` mechanical and
+  prevents the prefix from drifting into half the call sites.
+- Alternative considered: resolve in `PostgresStore.__init__`.
+  Rejected — pushes a Settings dependency down into the store, which
+  is happy taking just `RDBConfig` today and shouldn't have to grow a
+  `vectordb` parameter to learn the collection name.
+
+**3. Wrote `create_vector_store` as a fail-loud stub now, not a Phase 7B
+TODO.**
+Phase 7E depends on 7B per the plan, but 7B is not yet landed. Rather
+than leave the vector store unwired entirely, the factory exists with
+the right signature (`(settings: Settings) -> VectorStore`) and raises
+`NotImplementedError("create_vector_store() is a Phase 7B
+deliverable...")` at the body. Phase 7B's diff becomes a single-method
+body replacement; orchestrators that import the symbol today already
+get the right error message at runtime.
+- Why: keeps the public DI surface stable across the Phase 7B boundary
+  — Phase 8 code can import `create_vector_store` now even if it
+  cannot yet call it.
+- Alternative considered: omit the factory until 7B lands. Rejected —
+  the `ServiceContainer.vector_store` property has to point at
+  *something* for tests; routing it through a documented stub is
+  clearer than no symbol at all.
+
+**4. Aligned `services/persistence/` and `services/storage/` imports
+to the project's short-form convention (`from core.X`, not
+`from openrag.core.X`).**
+Pytest sets `pythonpath = ./openrag`, so `openrag/core/foo.py` is
+importable as both `core.foo` and `openrag.core.foo` (the editable
+install also exposes the `openrag` package). Python treats those as
+two distinct modules, so a class defined once but imported via both
+paths fails `isinstance` checks — which is exactly how the Phase 7E
+container test first surfaced the dual-import bug
+(`PgDocumentRepository` not isinstance `DocumentRepository`). Picking
+one convention everywhere fixes the bug, and `CLAUDE.md` already
+mandates the short form (`from components.ray_utils import ...`).
+- Why: matches the rest of the codebase and removes a class of
+  isinstance bugs that would otherwise dog every Phase 8 orchestrator
+  test.
+- Alternative considered: leave the `openrag.X` prefix in place and
+  ban the short form in tests. Rejected — the short form is already
+  load-bearing in `di/`, `core/llm/`, `core/embeddings/`, and the
+  Phase 6 inference adapters; changing all of those to the long form
+  would be a much larger and riskier sed pass.
+
+---
+
 ## Phase 7F — Integration test layout (2026-05-13)
 
 **1. Integration tests land at `tests/integration/`, not colocated with the SUT and not under `tests/api_tests/`.**

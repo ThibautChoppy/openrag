@@ -30,8 +30,8 @@ import secrets
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from openrag.core.models.user import ApiKey, PartitionRole, User, UserPartition
-from openrag.core.ports.user_repo import UserRepository
+from core.models.user import ApiKey, PartitionRole, User, UserPartition
+from core.ports.user_repo import UserRepository
 
 if TYPE_CHECKING:
     import asyncpg

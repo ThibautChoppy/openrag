@@ -9,8 +9,8 @@ a TTL on cleanup; no support exists today.
 
 from __future__ import annotations
 
-from openrag.core.ports.idempotency_repo import IdempotencyRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.idempotency_repo import IdempotencyRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgIdempotencyRepository(_StubRepositoryBase, IdempotencyRepository):

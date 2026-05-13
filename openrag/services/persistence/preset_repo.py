@@ -8,8 +8,8 @@ operators touching YAML. No table exists today.
 
 from __future__ import annotations
 
-from openrag.core.ports.preset_repo import PresetRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.preset_repo import PresetRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgPresetRepository(_StubRepositoryBase, PresetRepository):

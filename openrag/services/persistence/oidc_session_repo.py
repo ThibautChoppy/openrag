@@ -28,8 +28,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from openrag.core.models.user import OIDCSession
-from openrag.core.ports.oidc_session_repo import OIDCSessionRepository
+from core.models.user import OIDCSession
+from core.ports.oidc_session_repo import OIDCSessionRepository
 
 if TYPE_CHECKING:
     import asyncpg

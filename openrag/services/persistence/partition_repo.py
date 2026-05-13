@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from openrag.core.ports.partition_repo import PartitionRepository
+from core.ports.partition_repo import PartitionRepository
 
 if TYPE_CHECKING:
     import asyncpg

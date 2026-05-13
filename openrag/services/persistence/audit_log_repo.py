@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from openrag.core.ports.audit_log_repo import AuditLogRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.audit_log_repo import AuditLogRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgAuditLogRepository(_StubRepositoryBase, AuditLogRepository):

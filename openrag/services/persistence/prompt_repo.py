@@ -10,9 +10,9 @@ table.
 
 from __future__ import annotations
 
-from openrag.core.models.prompt import Prompt
-from openrag.core.ports.prompt_repo import PromptRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.models.prompt import Prompt
+from core.ports.prompt_repo import PromptRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgPromptRepository(_StubRepositoryBase, PromptRepository):

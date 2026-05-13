@@ -10,8 +10,8 @@ raises :class:`StubRepositoryError`.
 
 from __future__ import annotations
 
-from openrag.core.ports.chunk_repo import ChunkRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.chunk_repo import ChunkRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgChunkRepository(_StubRepositoryBase, ChunkRepository):

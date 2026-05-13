@@ -8,9 +8,9 @@ resume-on-reconnect UX and as a source for fine-tuning datasets.
 
 from __future__ import annotations
 
-from openrag.core.models.conversation import Conversation, Message
-from openrag.core.ports.conversation_repo import ConversationRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.models.conversation import Conversation, Message
+from core.ports.conversation_repo import ConversationRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgConversationRepository(_StubRepositoryBase, ConversationRepository):

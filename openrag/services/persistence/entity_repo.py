@@ -8,8 +8,8 @@ file changes.
 
 from __future__ import annotations
 
-from openrag.core.ports.entity_repo import EntityRepository
-from openrag.services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
+from core.ports.entity_repo import EntityRepository
+from services.persistence._stubs import _StubRepositoryBase, stub_not_implemented
 
 
 class PgEntityRepository(_StubRepositoryBase, EntityRepository):
