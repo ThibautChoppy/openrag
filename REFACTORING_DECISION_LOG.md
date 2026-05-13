@@ -1107,6 +1107,38 @@ real database, and splitting would mean landing the new tests broken.
   Phase 8 orchestrator tests to hit them.
 
 ---
+
+## Phase 7C — God-object shim (2026-05-13)
+
+**1. Kept the "create PG database if missing" bootstrap in the shim, not
+in `PostgresStore`.**
+The legacy `PartitionFileManager.__init__` auto-created the per-collection
+database via `sqlalchemy_utils.create_database` (`utils.py:39-40`) — a
+side-effect callers depended on without ever opting in. The Phase 7C
+replay needed equivalent behaviour, and the natural architectural home
+is `PostgresStore.initialize()` (symmetric with the Alembic-migration
+step it already runs, and with `MilvusVectorStore.initialize()` which
+materialises its collection). It was instead placed on the shim as
+`MilvusDB._ensure_pg_database`, called from `MilvusDB.initialize()`
+between the vector-store and catalog-store bootstrap steps.
+- Why: Phase 7C's scope contract is "only `components/indexer/vectordb/vectordb.py`
+  is modified". Pushing the helper down into `PostgresStore` would have
+  expanded the blast radius into 7A.3 territory while the shim was still
+  the only caller. Punting the design to Phase 7E (DI wiring, where the
+  `create_catalog_store` factory already centralises the database-name
+  derivation) means one place owns both naming and provisioning once
+  the shim is gone.
+- Alternative considered: move it to `PostgresStore.initialize()` now
+  (cleanest layering). Rejected for the scope reason above — but **flag
+  for 7E/8 follow-up**: when DI wiring lands the store-creation path
+  for orchestrators, the database-existence check should move into
+  `PostgresStore.initialize()` (or `ConnectionManager.initialize()`)
+  so the shim's `_ensure_pg_database` helper can be deleted in Phase 9
+  without leaving a regression behind. Track this together with the
+  `scripts/*.py` callers that already duplicate the
+  `partitions_for_collection_<name>` derivation (see Phase 7E entry 2).
+
+---
 ## Template for future entries
 
 ```
