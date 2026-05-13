@@ -117,5 +117,5 @@ class LocalWhisperLoader(BaseLoader):
                 self.save_content(content, str(file_path))
             return doc
         except Exception as e:
-            self.logger.error("Error loading document", error=str(e))
-            raise e
+            logger.error("Error loading document", error=str(e))
+            raise
