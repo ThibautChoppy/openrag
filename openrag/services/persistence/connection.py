@@ -19,17 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import asyncpg
+from utils.logger import get_logger
 
 if TYPE_CHECKING:
     from core.config.infrastructure import RDBConfig
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations" / "alembic"
@@ -105,12 +105,7 @@ class ConnectionManager:
                     command_timeout=self._command_timeout,
                     init=_init_connection,
                 )
-                logger.info(
-                    "Connected to Postgres at %s (pool=%d..%d)",
-                    self._dsn_log,
-                    self._min_size,
-                    self._max_size,
-                )
+                logger.info(f"Connected to Postgres at {self._dsn_log} (pool={self._min_size}..{self._max_size})")
                 return
             except (OSError, asyncpg.PostgresError) as exc:
                 last_exc = exc
@@ -121,11 +116,7 @@ class ConnectionManager:
                     _RETRY_MAX_DELAY_SECONDS,
                 )
                 logger.warning(
-                    "Postgres connection attempt %d/%d failed (%s); retrying in %.1fs",
-                    attempt,
-                    _RETRY_ATTEMPTS,
-                    exc,
-                    delay,
+                    f"Postgres connection attempt {attempt}/{_RETRY_ATTEMPTS} failed ({exc}); retrying in {delay:.1f}s"
                 )
                 await asyncio.sleep(delay)
 
@@ -164,8 +155,13 @@ class ConnectionManager:
         # %(here)s, so this resolves to services/persistence/migrations/alembic/.
         cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
         cfg.set_main_option("sqlalchemy.url", self._dsn)
-        logger.info("Running Alembic migrations against %s", self._dsn_log)
-        command.upgrade(cfg, "head")
+        logger.info(f"Running Alembic migrations against {self._dsn_log}")
+        try:
+            command.upgrade(cfg, "head")
+        except Exception as exc:
+            logger.error(f"Alembic migration failed for {self._dsn_log}: {exc}")
+            raise RuntimeError(f"Failed to run Alembic migrations against {self._dsn_log}: {exc}") from exc
+        logger.info(f"Alembic migrations completed for {self._dsn_log}")
 
 
 __all__ = ["ConnectionManager"]
