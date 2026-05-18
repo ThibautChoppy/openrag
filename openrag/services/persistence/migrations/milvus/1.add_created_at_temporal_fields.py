@@ -13,28 +13,28 @@ them populated at index time by the application code.
 
 Usage — prefer the generic runner (from repo root, inside the container):
     docker compose run --no-deps --rm --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/migrate.py [--dry-run] [--downgrade] [--target N]
+        uv run python services/persistence/migrations/milvus/migrate.py [--dry-run] [--downgrade] [--target N]
 
 Or run this script directly:
     # Dry-run first (inspect only, no changes):
     docker compose run --no-deps --rm --build --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/1.add_temporal_fields.py --dry-run
+        uv run python services/persistence/migrations/milvus/1.add_created_at_temporal_fields.py --dry-run
 
     # Apply:
     docker compose run --no-deps --rm --build --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/1.add_temporal_fields.py
+        uv run python services/persistence/migrations/milvus/1.add_created_at_temporal_fields.py
 
     # Roll back indexes and reset version (fields cannot be dropped in Milvus):
     docker compose run --no-deps --rm --entrypoint "" openrag \\
-        uv run python scripts/migrations/milvus/1.add_temporal_fields.py --downgrade
+        uv run python services/persistence/migrations/milvus/1.add_created_at_temporal_fields.py --downgrade
 """
 
 import argparse
 import sys
 
-from components.indexer.vectordb.vectordb import SCHEMA_VERSION_PROPERTY_KEY
 from config import load_config
 from pymilvus import DataType, MilvusClient
+from services.storage.milvus_store import SCHEMA_VERSION_PROPERTY_KEY
 from utils.logger import get_logger
 
 TARGET_VERSION = 1  # The schema version this migration brings the collection to.

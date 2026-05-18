@@ -644,6 +644,501 @@ def completion_text(resp: Completion) -> str:
 
 ---
 
+## Phase 7A.1 — Connection manager + schema (2026-05-12)
+
+**1. Pulled the 7A.4 migration directory move forward into the 7A.1 commit set.**
+The spec files the directory move (`scripts/migrations/alembic/` →
+`services/persistence/migrations/`) and the env.py rewire under a separate
+subsection (**7A.4 — Migrations**), distinct from 7A.1 (`connection.py` +
+`schema.py`). The move was done in this commit set anyway.
+- Why: The 7A.1 work creates `schema.py` whose entire purpose is to be
+  Alembic's metadata target. Leaving env.py pointing at the legacy
+  `components.indexer.vectordb.models.Base.metadata` would have created a
+  short-lived intermediate state where the two metadata definitions had to
+  stay byte-for-byte identical (or Alembic autogenerate would flag the
+  schema as drifted). Moving env.py at the same time avoids that risk
+  window — once schema.py exists, env.py points at it directly.
+- Alternative considered: strict 7A.1-only — create `schema.py` but leave
+  the old `scripts/migrations/alembic/env.py` importing `Base.metadata`
+  until 7A.4. Rejected for the dual-source-of-truth risk above, and
+  because the migration move is a pure `git mv` with no code changes
+  beyond two import lines.
+
+**2. Extended `RDBConfig` with `database`, `pool_min_size`, `pool_max_size`, `command_timeout`.**
+The spec's `ConnectionManager.__init__` pseudocode reads `config.database`,
+`config.pool_min_size`, `config.pool_max_size` directly. None of those
+fields existed on OpenRAG's `RDBConfig`. Added them (with defaults
+`pool_min_size=5`, `pool_max_size=20`, `command_timeout=30`, `database=None`)
+plus matching `POSTGRES_DATABASE` / `POSTGRES_POOL_{MIN,MAX}_SIZE` /
+`POSTGRES_COMMAND_TIMEOUT` env-var mappings in `core/config/loader.py`.
+- Why: 7A.1 doesn't compile otherwise. The spec's "files to create" table
+  lists only `connection.py` + `schema.py`, but the implementation it shows
+  has a hard config-shape dependency. Treated as required scaffolding for
+  7A.1 rather than as a 7E (DI) concern, since the new fields belong on
+  the same config object that already carries `host`/`port`/`user`/`password`.
+- Alternative considered: pass DSN + pool sizes as bare positional args
+  to `ConnectionManager.__init__`, leaving `RDBConfig` untouched. Rejected
+  — the spec's reference implementation accepts a `PostgresConfig` object
+  and the 7E DI wiring (`create_catalog_store(config)`) hands the whole
+  config in. Splitting fields across the call site and the config would
+  diverge from that contract.
+
+**3. `RDBConfig.database` stays optional; `ConnectionManager.__init__` raises if it's still `None`.**
+The legacy code derives the Postgres database name from the Milvus
+collection name (`f"partitions_for_collection_{collection_name}"`) at
+`MilvusDB` actor startup. The new `RDBConfig` could either (a) require the
+caller to set `database` explicitly, or (b) compute the name itself from
+`VectorDBConfig.collection_name`. Chose (a) with a None default and a
+constructor-time guard.
+- Why: Crossing config sections (RDB reading VectorDB) would entangle two
+  otherwise independent config blocks and make `RDBConfig` non-portable.
+  The collection→database mapping is an integration concern that belongs
+  in the 7E DI wiring (`create_catalog_store` will build the database
+  name from `config.vectordb.collection_name` and inject it). The guard
+  in `ConnectionManager` makes the missing-database case fail loudly at
+  construction instead of silently producing a malformed DSN.
+- Alternative considered: derive the database name inside
+  `RDBConfig.model_post_init` from a separately-injected collection name.
+  Rejected — adds two-way coupling between config sections for no gain;
+  7E handles the wiring cleanly in one place.
+
+**4. Programmatic schema-vs-ORM diff used as the acceptance check.**
+After rewriting all 7 tables as `sa.Table(...)` on a shared `MetaData`,
+ran a column-by-column / index-by-index / constraint-by-constraint diff
+against `components.indexer.vectordb.models.Base.metadata`. Empty diff =
+passes. No assertion is shipped — this was a one-time verification, not
+runtime behaviour.
+- Why: Alembic autogenerate will treat any divergence between the new
+  metadata target and the live database (which was built from the legacy
+  ORM) as a pending schema change. The diff confirms that won't happen
+  on first run, and documents the methodology for the next migration:
+  any future schema change must update both `schema.py` and the legacy
+  `models.py` until Phase 9 deletes the latter.
+- Alternative considered: ship the diff as a runtime test in 7F.
+  Deferred — 7F's repo tests already need a live Postgres; a metadata
+  diff doesn't need one and can live as a one-off check until the
+  legacy `models.py` goes away in Phase 9.
+
+---
+
+## Phase 7A.2 — Repository implementations (2026-05-12)
+
+**1. Added a `WorkspaceRepository` port + `Workspace` domain model.**
+The Phase-4 ports list had no workspace abstraction even though the
+Phase-7 spec explicitly enumerates `workspace_repo.py` as one of the six
+"real" repos with ten methods extracted from `PartitionFileManager`.
+Added `core/ports/workspace_repo.py`, `core/models/workspace.py`, and
+exposed `CatalogStore.workspace_repo`.
+- Why: skipping it would leave the `workspaces` + `workspace_files`
+  tables strictly addressable only through the shim, defeating Phase
+  8's point (orchestrators talk to ports, not the legacy actor). The
+  legacy code's workspace surface is non-trivial (orphan-file
+  detection, partition-scoped FK resolution) — it needs a first-class
+  port.
+- Alternative considered: fold workspace methods into `DocumentRepository`
+  or `PartitionRepository`. Rejected — workspaces are a distinct
+  aggregate (their own row + join table) and conflating them blurs the
+  responsibility split that the rest of the ports layer enforces.
+
+**2. Extended `OIDCSession` domain model with three optional `bytes` fields
+for the encrypted IdP tokens.**
+The Phase-4 model had `id`, `session_token_hash`, `user_id`, `sid`,
+`sub`, two timestamps, `last_refresh_at`, `revoked_at` — no token
+fields. The port `create_session(session: OIDCSession) -> OIDCSession`
+must convey what to store, so omitting them was a port-shape bug.
+Added `id_token_encrypted`, `access_token_encrypted`,
+`refresh_token_encrypted` as `bytes | None`.
+- Why: the auth layer (Phase 6F) encrypts tokens before storage and
+  decrypts after read; the repo is intentionally byte-blind. Domain
+  models that hide load-bearing storage fields force callers to
+  bypass the port (e.g. with separate `set_tokens()` calls), defeating
+  the point of the typed contract. The "encrypted blobs flow through
+  the model verbatim" pattern is the same one the legacy
+  `_oidc_session_to_dict()` already uses.
+- Alternative considered: an internal `OIDCSessionWithTokens` model
+  used only at the repo boundary. Rejected — duplicating models for
+  the sake of pretending the encrypted bytes aren't part of the
+  session is structural noise; Phase 8 callers don't read those
+  fields anyway.
+
+**3. Concrete repos expose two parallel surfaces: ABC methods + legacy
+method names — both writing to the same rows.**
+Each `Pg<Entity>Repository` implements the Phase-4 port ABC verbatim
+(typed domain models in, typed domain models out) AND carries every
+legacy `PartitionFileManager` method name with its original signature
+and return shape (positional args, dict returns) as separate methods
+marked `# TODO(phase-9): remove`. The legacy methods are NOT on the ABC.
+- Why: Phase 8 orchestrators consume the port; Phase 7C shim must
+  delegate to the existing 76 call sites without rewriting them. A
+  single typed surface would force the shim to translate at every
+  call boundary, multiplying the change set and the regression
+  surface. Two surfaces on the same underlying SQL keeps both clients
+  happy with zero behavioural drift. Phase 9 deletes the legacy
+  surface after the shim goes away.
+- Alternative considered: legacy method names only, postpone the
+  typed port to Phase 8. Rejected — the typed port is what makes the
+  ports/adapters split testable from `core/` unit tests; doing it now
+  is the cheap moment.
+
+**4. `users.password_hash`, `users.is_active`, `users.updated_at` exist on
+the `User` domain model but not on the schema; mapped to defaults at the
+repo boundary.**
+The Phase-4 `User` model documents three auth modes (OIDC, token,
+password+JWT) so it carries `password_hash`. The current schema only
+supports OIDC + token. The user_repo silently drops `password_hash` on
+write and synthesises `is_active=True` / `updated_at=created_at` on
+read.
+- Why: the alternative is dropping fields from the domain model, but
+  password auth is a planned post-refactoring feature on the roadmap.
+  Keeping the model field-complete means the orchestrator code can
+  be written once and only the repo updates when the column lands.
+- Alternative considered: add the missing columns now via a new
+  Alembic migration. Rejected — Phase 7 is a structural refactor, not
+  a feature expansion. Adding columns expands scope past the spec.
+
+**5. Api-key repository methods raise `NotImplementedError`; stub repos
+raise a `StubRepositoryError(NotImplementedError)` subclass.**
+The `UserRepository.create_api_key` / `get_api_keys_by_prefix` /
+`list_api_keys_for_user` / `delete_api_key` methods have no backing
+table (`users.token` is a single-token field). Six entire ports
+(`ChunkRepository`, `JobRepository`, `PromptRepository`,
+`ConversationRepository`, `AuditLogRepository`,
+`IdempotencyRepository`) plus four extras (`EntityRepository`,
+`TopicTagRepository`, `ModelEndpointRepository`, `PresetRepository`)
+are full-class stubs.
+- Why: a silent fallback (empty list / `None`) is worse than an
+  exception — an orchestrator that retrieves zero rows from a "doesn't
+  exist yet" repo behaves indistinguishably from a real empty repo,
+  hiding bugs. The dedicated `StubRepositoryError` subclass is loudly
+  grep-findable (`grep -rn stub_not_implemented`) when the
+  post-refactoring features come online.
+- Alternative considered: leave the stub ports unimplemented (no Pg
+  classes at all). Rejected — `CatalogStore` requires every port via
+  abstract properties; a partial implementation can't satisfy the
+  ABC, so Phase 7A.3 (composite store) wouldn't even instantiate.
+
+**6. Registered `json` / `jsonb` codecs on every connection via the
+asyncpg `init` callback so reads return Python dicts.**
+The legacy schema stores `files.file_metadata` as `JSON`; asyncpg
+returns JSON columns as strings by default. Without the codec every
+repo would have to `json.loads()` every row read and `json.dumps()`
+every parameter write.
+- Why: one place to register, repos stay focused on SQL. The codec
+  also covers `jsonb` so future migrations from `JSON` to `JSONB`
+  don't ripple into repo code.
+- Alternative considered: per-call `json.loads()` / `json.dumps()` in
+  each repo. Rejected — duplicate boilerplate per repo, easy to forget
+  in one spot. The connection-level codec is the asyncpg-recommended
+  pattern.
+
+---
+
+## Phase 7A.3 — PostgresStore composite (2026-05-13)
+
+**1. Placed `PostgresStore` in `services/storage/`, not alongside the
+repositories in `services/persistence/`.**
+The "storage" tier owns the high-level adapters that the rest of the
+system depends on (`MilvusStore`, `PostgresStore`); "persistence" owns
+the row-level repository implementations. Phase 8 orchestrators only
+ever import from `storage` — they never reach into individual repo
+modules. Keeping the composite outside `persistence/` makes that
+boundary visible in the import graph.
+- Why: the phase 7 plan explicitly names this split and it matches the
+  already-existing `services/storage/milvus_store.py` placeholder. A
+  future reader can tell the layers apart by directory.
+- Alternative considered: `services/persistence/postgres_store.py`.
+  Rejected — would conflate the composite with its parts and force the
+  shim/orchestrators to import from `persistence/`, defeating the
+  point of the directory split.
+
+**2. Eagerly construct all fifteen repos in `__init__`; share one
+`pool_getter` callable across them.**
+Repos do not touch the pool until a query runs, so building them at
+construction time is free and saves every caller from a lazy-init
+dance. Passing a `_pool_getter` bound method (instead of the raw pool
+reference) lets the store survive a `shutdown()`/`initialize()` cycle
+in tests — repos always see the live pool.
+- Why: matches the pool-getter pattern established in 7A.1 and keeps
+  test fixtures simple (rebuild the store, not the repos).
+- Alternative considered: build repos lazily on first property access.
+  Rejected — extra branching with no measurable win, and the property
+  getter would lose its read-only character.
+
+**3. `initialize()` opens the pool *then* runs migrations; both behind
+a single entry point.**
+The legacy ORM bootstrapped tables synchronously via
+`Base.metadata.create_all` before Alembic ever ran, which is why every
+Phase 7 migration is idempotent (CLAUDE.md "Alembic Migration
+Idempotency"). The composite keeps that ordering so the DI container
+calls `await store.initialize()` once and gets a ready-to-query store.
+A `run_migrations=False` flag is provided for fast unit tests against
+an already-migrated database.
+- Why: hiding the two-step lifecycle behind one method keeps the
+  Phase 7E container wiring identical to the inference adapters and
+  matches the `CatalogStore` ABC contract (one `initialize`, one
+  `shutdown`).
+- Alternative considered: expose `run_migrations()` separately and
+  require the container to call both. Rejected — leaks an
+  implementation detail across the layer boundary and makes every
+  composition-root harder to write.
+
+**4. Expose the raw asyncpg pool as a `pool` property on the concrete
+class, not on the `CatalogStore` ABC.**
+Phase 8 orchestrators need cross-repo transactions
+(`async with store.pool.acquire() as conn: async with conn.transaction(): ...`).
+That capability is not on the ABC because most consumers do single-repo
+calls; adding it to the port would invite leaks of asyncpg specifics
+into orchestrator code that doesn't need them. Concrete clients that
+truly need transactional escape hatches can depend on `PostgresStore`
+directly.
+- Why: keeps the ABC minimal while still unlocking the transaction
+  pattern. Phase 8 will decide whether to formalise a
+  `UnitOfWork`-style port; until then the escape hatch is explicit and
+  grep-findable (`grep -rn "store.pool"`).
+- Alternative considered: add a `pool` property to `CatalogStore`.
+  Rejected — turns the ABC into an asyncpg-shaped interface and makes
+  it harder to swap in a non-Postgres backend (e.g. SQLite for tests).
+
+---
+
+## Phase 7B — Milvus vector store (2026-05-12)
+
+**1. `hybrid_search(embedding, query_text, …)` is on the `VectorStore` ABC alongside `search`. Initial draft kept it Milvus-specific; reversed before the contract surface settled.**
+The Phase 7 plan's `_hybrid_search` example (STRATEGY-adjacent doc `phase 7.md` lines 275–298) references an undeclared `query_text` argument — the doc tacitly admits the embedding-only `search` cannot drive Milvus 2.6's native BM25. Milvus's `Function(FunctionType.BM25)` computes the sparse vector server-side from the `text` field at both insert and query time, so the hybrid path *requires* the raw query text — not a pre-computed sparse vector and not an embedding.
+- Why on the ABC: every realistic backend in the SaaS shortlist has a hybrid lexical-plus-dense path (Qdrant via sparse-vector points + fusion, Weaviate hybrid BM25+vector, Pinecone sparse-dense vectors, OpenSearch knn+match). Treating hybrid as a Milvus-only quirk would push an `isinstance(store, MilvusVectorStore)` branch straight to the contract boundary inside the Phase-8 retrieval orchestrator — exactly the leak the narrow store was supposed to prevent. `query_text` is wider than strictly needed for backends that accept a pre-computed sparse vector, but it is the only shape that fits Milvus's server-side BM25 without client-side tokenization, which would force a reindex and contradicts the spec's "Critical: preserve OpenRAG's current Milvus schema".
+- Initial draft and reversal: the first pass put `hybrid_search` on `MilvusVectorStore` only and kept the ABC embedding-only — *"BM25 is a Milvus-specific implementation detail; bleeding it into the cross-store contract for one backend's quirk is the wrong direction."* Reversed once the SaaS-end-state backend list made hybrid look like a contract feature rather than a Milvus quirk. Backends without a hybrid path can raise `VDBSearchError` at call time — same shape `MilvusVectorStore` already uses when its backing collection was constructed with `hybrid_search=False`.
+- Alternative considered: (a) pre-compute sparse vectors client-side via a tokenizer/IDF table — rejected, abandons Milvus's native BM25 (server-side analyzer + stop words) and would force a reindex; (b) `query_text: str | None = None` added to `search` itself (one method, optional arg) — rejected, conflates dense-only and hybrid call sites in the same method and forces every implementation to inspect both args.
+
+**2. Embedding dimension comes in via a lazy `await store.initialize(dim)`, not a constructor arg or a config field.**
+The Phase 7 plan's example constructor is `MilvusVectorStore(config: MilvusConfig)` and silently elides where `dim` comes from — the schema needs the dim, but the dim lives on the embedder.
+- Why: Mirrors `PostgresStore.initialize()` shape so DI wiring (Phase 7E) has one consistent "construct cheap, materialise async" pattern across both stores. Construction stays I/O-free and embedder-free; the DI container resolves the embedder, reads `embedding_dimension`, and passes it to `initialize()`. Idempotent + double-checked-locked so concurrent first-callers don't race.
+- Alternative considered: (a) explicit constructor arg `MilvusVectorStore(config, embedding_dimension=…)` — cleaner dependency but forces every test/composition root to resolve the embedder first; (b) `VectorDBConfig.embedding_dimension` — duplicates the embedder's `EmbedderConfig.embedding_dimension` value across two configs, drift risk.
+
+**3. ABC `collection` arg = Milvus collection name (not partition row-value). Partition lives only in `filters["partition"]`. Added a Milvus-specific `delete_by_filter(filters)`.**
+The Phase 7 plan (`phase 7.md` line 300) explicitly maps the ABC's `collection` argument to "the partition row-value", and proposes `drop_collection(name)` deleting rows where `partition == name`. The same word would then mean two different things across the codebase — Milvus's own vocabulary keeps *collection* (top-level container) and *partition* (row tag via `partition_key`) strictly distinct.
+- Why: The end-state of this refactor is a multi-tenant SaaS product where each client gets its own Milvus collection (see [[project-saas-collection-per-tenant]] memory). In that world the ABC's `collection` arg is a real per-tenant Milvus collection name; conflating it with partition values would paint the future store-factory/pool into a corner. Strict separation makes the SaaS path a Phase-8+ wrapping layer ("`client_id → MilvusVectorStore`") on top of an unchanged narrow store.
+- Concrete shape: `MilvusVectorStore._resolve_collection(name)` accepts only `self._collection_name` or the ABC sentinel `"default"`; anything else raises `ValueError`. `drop_collection(name)` drops the whole Milvus collection (admin/test). Partition-level row deletion (used by the 7C shim's `delete_partition`) goes through a new Milvus-specific public method `delete_by_filter(filters)`, with an explicit guard that refuses empty/wildcard expressions so a typo cannot nuke the entire collection.
+- Alternative considered: (a) spec-faithful overload — rejected, conflates two distinct Milvus concepts in code that has to survive the SaaS pivot; (b) ignore the `collection` arg entirely instead of validating — rejected, silently accepting wrong names is the same forward-compat hazard.
+
+**4. No manual reconnect / retry logic against Milvus — trust pymilvus + gRPC internals.**
+The Phase 7 plan's design note recommends `MilvusVectorStore` carry its own retry/reconnect logic, citing `ConnectionNotExistException` and double-checked locking in `_ensure_loaded()`.
+- Why: That guidance comes from the pre-2.4 ORM-style `connections.connect(alias=…)` API where named aliases needed explicit re-establishment. Pymilvus 2.6's `MilvusClient(uri=…)` / `AsyncMilvusClient(uri=…)` — per [v2.6.x API reference](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Client/MilvusClient.md) and [AsyncMilvusClient v2.6.x](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Client/AsyncMilvusClient.md) — expose **no** public retry / reconnect / keepalive knobs and own their gRPC channel internally. The legacy `MilvusDB` does no manual reconnect either. Reintroducing client-side teardown-and-recreate logic risks racing pymilvus's internal channel state for no documented benefit. Documented inline in `MilvusVectorStore.__init__` so the plan's note doesn't get reintroduced later without evidence.
+- Alternative considered: (a) lightweight retry without client recreation (sleep + retry-once on connection-error message match) — rejected, no documented gRPC-level guarantee that a fresh call sees a healed channel any sooner than gRPC's own backoff; (b) full client teardown + recreate with double-checked locking — drafted, then dropped after reading the pymilvus 2.6 reference; pure complexity for an unproven failure mode.
+
+**5. Store surface kept narrow: `VectorStore` ABC + Milvus-only `delete_by_filter`. File/chunk conveniences are 7C shim's job.**
+The legacy `MilvusDB` exposes `get_file_chunks`, `get_chunk_by_id`, `get_file_chunk_ids`, `list_all_chunks`, `get_related_chunks`, `get_ancestor_chunks`, `get_surrounding_chunks` — all file-scoped or relationship-scoped reads.
+- Why: Each of those is either (a) a thin wrapper over `query_chunks_by_filter` (file-scoped reads) or (b) domain logic that belongs in `core/retrieval/hydration.py` per the spec (surrounding/related/ancestor chunks). Putting them on the store widens the surface only to delete them again in Phase 8. The 7C shim builds the file-scoped variants from `query_chunks_by_filter` (two RPCs vs one — accepted cost for a narrow ABC-aligned store).
+- Alternative considered: add the convenience methods directly on the store. Easier 7C shim (one-line delegate per method) but a wider surface to maintain and to migrate again in Phase 8. Rejected.
+
+---
+
+## Phase 7A.4 — Unified migrations namespace (2026-05-12)
+
+**1. Nest Postgres alembic and Milvus migrations as siblings under `services/persistence/migrations/{alembic,milvus}/`, not as two parallel roots.**
+Person A's pulled-forward 7A.4 (commit `91f7078`, logged in [Phase 7A.1 §1](#phase-7a1--connection-manager--schema-2026-05-12)) placed alembic directly at `services/persistence/migrations/`. The phase 7 plan is silent on Milvus migrations — they are an OpenRAG-specific addition (Milvus schema-version property + generic runner under `openrag/scripts/migrations/milvus/`) not contemplated by the spec. The first take on the Milvus side put them at `services/storage/migrations/` next to `milvus_store.py` (commits `b40de00` + `26311f0`, since reset out of history); reshuffled to a unified namespace before push.
+- Why: One root with backend subdirs ("where do I run migrations?" → `services/persistence/migrations/`, "for which backend?" → `alembic/` or `milvus/`) is easier to reason about than two roots that split "schema evolution" across two services-layer namespaces purely because their adapters happen to live in different sub-folders. The unified shape also leaves room for additional backends (S3 lifecycle, future tenancy stores) without re-litigating where migrations live each time. Aligns with the SaaS end-state ([[project-saas-collection-per-tenant]] memory) where per-tenant collection lifecycle and per-tenant schema versioning will both grow inside this same namespace.
+- Alternative considered: (a) spec-plus-by-symmetry layout — alembic under `services/persistence/migrations/`, Milvus under `services/storage/migrations/`. Rejected: makes the storage layer carry a `migrations/` peer to `milvus_store.py`, conflating "the adapter" with "the adapter's schema-evolution scripts", and forces every reader to know which backend hides where. (b) flatten everything under one dir without backend subdirs. Rejected: alembic's filename conventions (`<hash>_<slug>.py`) and the Milvus runner's `N.description.py` discovery rules would step on each other.
+
+**2. Milvus migration runner imports `SCHEMA_VERSION_PROPERTY_KEY` from `services.storage.milvus_store`, not from `components.indexer.vectordb.vectordb`.**
+The constant exists identically in both modules right now (the new store copied it byte-for-byte from the legacy MilvusDB during 7B). Either import resolves; we picked the new home.
+- Why: The migration set, the constant, and the new adapter all live under `services/` after this move. Importing from the legacy module would create a backwards dependency from the new namespace into the deprecation-path module, pinning `components.indexer.vectordb.vectordb` alive past Phase 9's planned deletion. Updating the import now is a zero-risk follow-up to the move (legacy still defines the constant with the same value, so behaviour is identical) and makes the legacy deletion a single grep-and-delete in Phase 9 rather than "deletion + N migrate.py import updates".
+- Alternative considered: leave the import on the legacy module until Phase 9 forces the issue. Rejected — no benefit, and `9` is the wrong phase to be hunting incidental imports.
+
+---
+
+## Phase 7E — DI wiring (2026-05-13)
+
+**1. Made `ServiceContainer(settings=None)` optional so the pre-Phase-7E
+test paths keep working.**
+The container's pre-existing job was to populate inference registries
+(`ServiceContainer()` with no arguments). Phase 7E adds storage adapter
+wiring that needs a `Settings` instance, but rewriting every legacy
+test to pass settings is busy-work and risks scope creep. The settings
+argument is therefore optional; the storage accessors raise a clear
+`RuntimeError` ("ServiceContainer was constructed without a Settings
+instance — pass Settings to wire storage adapters") when reached
+without one.
+- Why: keeps the Phase 7E commit a strict superset of the previous
+  container behaviour and surfaces the misuse with a message that
+  points at the fix.
+- Alternative considered: split into `ServiceContainer` (registries
+  only) and `AppContainer(settings)` (registries + storage). Rejected
+  — Phase 8 orchestrators will pull both layers from one container,
+  and a hard split now would invite a refactor at the very next phase.
+
+**2. Centralised the "database name from collection name" idiom in
+`create_catalog_store`.**
+The legacy `MilvusDB.__init__` derives the Postgres database name from
+the Milvus collection name (`partitions_for_collection_<name>`,
+vectordb.py:238). That contract is duplicated in `scripts/backup.py`,
+`scripts/restore.py`, `scripts/check_file_counts.py`, and the new
+Alembic `env.py`. The Phase 7E factory keeps the fallback in one place
+so DI wiring code never mentions the prefix; an explicit
+`rdb.database` still wins.
+- Why: the database name resolution is policy, not orchestrator code
+  — putting it in the factory keeps `di/container.py` mechanical and
+  prevents the prefix from drifting into half the call sites.
+- Alternative considered: resolve in `PostgresStore.__init__`.
+  Rejected — pushes a Settings dependency down into the store, which
+  is happy taking just `RDBConfig` today and shouldn't have to grow a
+  `vectordb` parameter to learn the collection name.
+
+**3. `create_vector_store` wires to the real `MilvusVectorStore` (Phase 7B)
+in this same branch.**
+The factory was first drafted as a fail-loud stub (`raise
+NotImplementedError("Phase 7B deliverable")`) so 7E could land
+independently of 7B. With 7B already on the branch when 7E was
+rebased, the factory's body swapped to its final shape: `return
+MilvusVectorStore(settings.vectordb)`. Construction stays I/O-free
+and embedder-free; the composition root resolves the embedder and
+calls `await store.initialize(embedding_dimension)` later, matching
+the lifecycle pattern :class:`PostgresStore` already follows.
+- Why: keeps the DI factory shape stable across the 7B handoff —
+  no caller has to know whether 7B was merged first. The lazy
+  `initialize(dim)` keeps the construction step out of any async
+  context and avoids a circular dependency on the embedder factory.
+- Alternative considered: pass the embedder dimension into the
+  factory itself. Rejected — forces every test/composition root to
+  resolve the embedder before the store, defeating the construct-
+  cheap / materialise-async split that the Phase 7B store relies on.
+
+**4. Aligned `services/persistence/` and `services/storage/` imports
+to the project's short-form convention (`from core.X`, not
+`from openrag.core.X`).**
+Pytest sets `pythonpath = ./openrag`, so `openrag/core/foo.py` is
+importable as both `core.foo` and `openrag.core.foo` (the editable
+install also exposes the `openrag` package). Python treats those as
+two distinct modules, so a class defined once but imported via both
+paths fails `isinstance` checks — which is exactly how the Phase 7E
+container test first surfaced the dual-import bug
+(`PgDocumentRepository` not isinstance `DocumentRepository`). Picking
+one convention everywhere fixes the bug, and `CLAUDE.md` already
+mandates the short form (`from components.ray_utils import ...`).
+- Why: matches the rest of the codebase and removes a class of
+  isinstance bugs that would otherwise dog every Phase 8 orchestrator
+  test.
+- Alternative considered: leave the `openrag.X` prefix in place and
+  ban the short form in tests. Rejected — the short form is already
+  load-bearing in `di/`, `core/llm/`, `core/embeddings/`, and the
+  Phase 6 inference adapters; changing all of those to the long form
+  would be a much larger and riskier sed pass.
+
+---
+
+## Phase 7F — Integration tests (2026-05-13)
+
+**1. Integration tests land at `tests/integration/`, not colocated with the SUT and not under `tests/api_tests/`.**
+The project today has tests in two places: colocated `openrag/**/test_*.py` (the long-standing convention) and `tests/api_tests/` (HTTP-style black-box tests against a running OpenRAG server). STRATEGY §13C describes a target end-state of `tests/{unit,integration,load}/` with everything under one root. 7F lands integration tests for both the asyncpg repos and `MilvusVectorStore`; the unified layout doesn't arrive until Phase 13C.
+- Why: Integration tests for both stores need to escape `pytest.ini`'s `testpaths = openrag` so a bare `uv run pytest` (the default unit run) does not drive real infrastructure. The cleanest interim home is exactly where Phase 13C will park them anyway — `tests/integration/` — so the file lands once and does not need to move during the sweep. Colocating per-repo tests under `openrag/services/persistence/test_*_repo.py` would also force every unit-test invocation to either skip (silently masking failures) or fail (in CI without infra) depending on how the skip is wired, neither of which is a good default.
+- Alternative considered: (a) park integration tests under `tests/api_tests/` to match the existing infra-test sibling layout. Rejected — `api_tests/` is HTTP-API-style by convention (httpx against a running server); adapter-level integration tests don't fit that mould, and the strategy doc has already settled the end-state location. (b) keep them colocated and rely on the `integration` pytest marker for deselection. Rejected — relies on every CI invocation remembering `-m "not integration"` and still pulls pymilvus/Postgres imports into the default unit run.
+
+**2. One ephemeral test database per session, truncate between tests.**
+The fixture creates `openrag_phase7_test` on session start with a clean
+schema, runs migrations once via `PostgresStore.initialize()`, and lets
+every test share the same store. An autouse fixture truncates the seven
+user-modifiable tables with `RESTART IDENTITY CASCADE` so each test
+starts with primary keys at 1.
+- Why: dropping/recreating per test would multiply the session cost by
+  the test count; a per-test truncate is microseconds. The fresh-DB-
+  per-session contract gives us migration coverage for free (any
+  Alembic regression surfaces at fixture setup, not in production).
+- Alternative considered: rollback-per-test via savepoints. Rejected
+  — asyncpg pools cycle connections, so a top-level rollback only
+  cleans the one connection used; the next test could see partial
+  state on a different connection. Truncate is straightforward and
+  matches what Phase 8 orchestrator tests will want.
+
+**3. Session-scoped loop and fixtures (`loop_scope="session"`).**
+`pytest-asyncio`'s default `function`-scope event loop conflicts with a
+session-scoped async fixture: the asyncpg pool binds to the loop it was
+created on, and each test then gets a different loop. Marking both the
+fixtures and the tests with `loop_scope="session"` keeps everything on
+one loop, which is also what asyncpg expects.
+- Why: a session-scoped pool is the whole reason to run an integration
+  suite — function-scoped pools would defeat the purpose. The
+  `loop_scope` knob is the official pytest-asyncio 1.x API for this.
+- Alternative considered: function-scoped pools (one per test).
+  Rejected — every test would pay the connection-establishment cost,
+  inflating the suite from ~5s to easily 30s+.
+
+**4. `tests/integration/test_stores.py` is `xfail(strict=True)` until the
+cross-store fixture lands in Phase 7C.**
+The Phase 7F plan calls for a cross-store full-cycle test
+(`create partition → upsert pre-embedded chunks → search → delete`).
+:class:`MilvusVectorStore` is in place (Phase 7B) and reachable through
+DI, but the existing `postgres_store` fixture does not yet hand out a
+companion Milvus store on the same collection — the combined fixture
+lands as part of Phase 7C (shim) so the assertion matches the legacy
+flow byte-for-byte. The strict marker means the day the fixture is
+wired and the body filled in, the unintended pass trips a clear
+failure rather than silently turning green.
+- Why: the file exists so the eventual diff is just a fixture + body
+  replacement. Strict xfail prevents "forgot to remove xfail" rot.
+- Alternative considered: skip with `pytest.skip(...)` or leave the
+  file out entirely. Rejected — skips are too easy to forget, and an
+  absent file means the cross-store test has to remember to be
+  created.
+
+**5. Fixed two bugs surfaced by writing the tests, in the same diff.**
+The integration suite caught two tz-naive/tz-aware mismatches in code
+written during 7A.2:
+
+* `PgOIDCSessionRepository.delete_expired` constructed
+  `datetime.now(UTC) - _EXPIRED_RETENTION` (tz-aware) and bound it
+  against the tz-naive `session_expires_at` column. asyncpg refuses
+  the cast at bind time. Fix: strip `tzinfo` from the cutoff before
+  the query.
+* `services/persistence/migrations/alembic/env.py` unconditionally clobbered
+  `sqlalchemy.url` with one derived from `load_config()`, ignoring
+  the DSN that `ConnectionManager.run_migrations()` had just set —
+  which is why the first run of the suite tried to resolve the docker
+  hostname `rdb` from a host process. Fix: defer to the preset URL
+  unless it's the alembic.ini placeholder.
+
+Both fixes are tiny but load-bearing for any non-default deployment
+(test DBs, named environments, CI overrides). I kept them in this
+commit rather than splitting them out — they only show up against a
+real database, and splitting would mean landing the new tests broken.
+- Why: the alternative (separate fix commits) would have the
+  integration tests fail on first introduction, which is a bad signal
+  in `git log`.
+- Alternative considered: hard-code a workaround in the test fixture.
+  Rejected — the underlying bugs would still be there waiting for
+  Phase 8 orchestrator tests to hit them.
+
+---
+
+## Phase 7C — God-object shim (2026-05-13)
+
+**1. Kept the "create PG database if missing" bootstrap in the shim, not
+in `PostgresStore`.**
+The legacy `PartitionFileManager.__init__` auto-created the per-collection
+database via `sqlalchemy_utils.create_database` (`utils.py:39-40`) — a
+side-effect callers depended on without ever opting in. The Phase 7C
+replay needed equivalent behaviour, and the natural architectural home
+is `PostgresStore.initialize()` (symmetric with the Alembic-migration
+step it already runs, and with `MilvusVectorStore.initialize()` which
+materialises its collection). It was instead placed on the shim as
+`MilvusDB._ensure_pg_database`, called from `MilvusDB.initialize()`
+between the vector-store and catalog-store bootstrap steps.
+- Why: Phase 7C's scope contract is "only `components/indexer/vectordb/vectordb.py`
+  is modified". Pushing the helper down into `PostgresStore` would have
+  expanded the blast radius into 7A.3 territory while the shim was still
+  the only caller. Punting the design to Phase 7E (DI wiring, where the
+  `create_catalog_store` factory already centralises the database-name
+  derivation) means one place owns both naming and provisioning once
+  the shim is gone.
+- Alternative considered: move it to `PostgresStore.initialize()` now
+  (cleanest layering). Rejected for the scope reason above — but **flag
+  for 7E/8 follow-up**: when DI wiring lands the store-creation path
+  for orchestrators, the database-existence check should move into
+  `PostgresStore.initialize()` (or `ConnectionManager.initialize()`)
+  so the shim's `_ensure_pg_database` helper can be deleted in Phase 9
+  without leaving a regression behind. Track this together with the
+  `scripts/*.py` callers that already duplicate the
+  `partitions_for_collection_<name>` derivation (see Phase 7E entry 2).
+
+---
 ## Template for future entries
 
 ```

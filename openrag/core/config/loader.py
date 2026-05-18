@@ -53,6 +53,10 @@ _ENV_OVERRIDES: list[tuple[str, str, type]] = [
     ("POSTGRES_USER", "rdb.user", str),
     ("POSTGRES_PASSWORD", "rdb.password", str),
     ("DEFAULT_FILE_QUOTA", "rdb.default_file_quota", int),
+    ("POSTGRES_DATABASE", "rdb.database", str),
+    ("POSTGRES_POOL_MIN_SIZE", "rdb.pool_min_size", int),
+    ("POSTGRES_POOL_MAX_SIZE", "rdb.pool_max_size", int),
+    ("POSTGRES_COMMAND_TIMEOUT", "rdb.command_timeout", int),
     # Reranker
     ("RERANKER_PROVIDER", "reranker.provider", str),
     ("RERANKER_ENABLED", "reranker.enabled", bool),

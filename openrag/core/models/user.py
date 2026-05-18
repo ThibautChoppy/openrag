@@ -81,7 +81,9 @@ class OIDCSession(BaseModel):
     """An active OIDC session linking a user to IdP tokens.
 
     Session token is opaque (stored hashed in DB).
-    IdP tokens (access, refresh, id) are Fernet-encrypted in DB.
+    IdP tokens (access, refresh, id) are Fernet-encrypted in DB — the auth
+    service encrypts before passing them in and decrypts after reading them
+    back; the repository just stores the bytes verbatim.
     """
 
     id: int = 0
@@ -89,6 +91,9 @@ class OIDCSession(BaseModel):
     user_id: int = 0
     sid: str | None = None
     sub: str = ""
+    id_token_encrypted: bytes | None = None
+    access_token_encrypted: bytes | None = None
+    refresh_token_encrypted: bytes | None = None
     access_token_expires_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     session_expires_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

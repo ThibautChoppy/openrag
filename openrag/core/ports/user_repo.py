@@ -1,15 +1,20 @@
-"""User repository interface — users, API keys, and partition assignments."""
+"""User repository interface — users and API keys.
+
+Partition memberships moved to
+:class:`~openrag.core.ports.partition_membership_repo.PartitionMembershipRepository`
+(7A.2 one-repo-per-entity layout).
+"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
 
-from openrag.core.models.user import ApiKey, PartitionRole, User, UserPartition
+from openrag.core.models.user import ApiKey, User
 
 
 class UserRepository(ABC):
-    """CRUD operations for users, API keys, and partition memberships.
+    """CRUD operations for users and API keys.
 
     Supports three auth modes:
     - OIDC/SSO: lookup by external_user_id
@@ -59,23 +64,3 @@ class UserRepository(ABC):
 
     @abstractmethod
     async def delete_api_key(self, key_id: str) -> bool: ...
-
-    # ── Partition memberships ─────────────────────────────────────────
-
-    @abstractmethod
-    async def assign_partition(self, assignment: UserPartition) -> UserPartition: ...
-
-    @abstractmethod
-    async def remove_partition(self, user_id: int, partition: str) -> bool: ...
-
-    @abstractmethod
-    async def list_user_partitions(self, user_id: int) -> list[UserPartition]: ...
-
-    @abstractmethod
-    async def list_partition_users(self, partition: str) -> list[UserPartition]: ...
-
-    @abstractmethod
-    async def update_partition_role(self, user_id: int, partition: str, role: PartitionRole) -> bool: ...
-
-    @abstractmethod
-    async def count_partition_users(self, partition: str) -> int: ...

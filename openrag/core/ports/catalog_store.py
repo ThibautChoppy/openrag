@@ -17,11 +17,13 @@ from .idempotency_repo import IdempotencyRepository
 from .job_repo import JobRepository
 from .model_endpoint_repo import ModelEndpointRepository
 from .oidc_session_repo import OIDCSessionRepository
+from .partition_membership_repo import PartitionMembershipRepository
 from .partition_repo import PartitionRepository
 from .preset_repo import PresetRepository
 from .prompt_repo import PromptRepository
 from .topic_tag_repo import TopicTagRepository
 from .user_repo import UserRepository
+from .workspace_repo import WorkspaceRepository
 
 
 class CatalogStore(ABC):
@@ -58,6 +60,10 @@ class CatalogStore(ABC):
 
     @property
     @abstractmethod
+    def membership_repo(self) -> PartitionMembershipRepository: ...
+
+    @property
+    @abstractmethod
     def model_endpoint_repo(self) -> ModelEndpointRepository: ...
 
     @property
@@ -91,3 +97,7 @@ class CatalogStore(ABC):
     @property
     @abstractmethod
     def oidc_session_repo(self) -> OIDCSessionRepository: ...
+
+    @property
+    @abstractmethod
+    def workspace_repo(self) -> WorkspaceRepository: ...

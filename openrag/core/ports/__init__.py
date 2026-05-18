@@ -10,11 +10,13 @@ from .idempotency_repo import IdempotencyRepository
 from .job_repo import JobRepository
 from .model_endpoint_repo import ModelEndpointRepository
 from .oidc_session_repo import OIDCSessionRepository
+from .partition_membership_repo import PartitionMembershipRepository
 from .partition_repo import PartitionRepository
 from .preset_repo import PresetRepository
 from .prompt_repo import PromptRepository
 from .topic_tag_repo import TopicTagRepository
 from .user_repo import UserRepository
+from .workspace_repo import WorkspaceRepository
 
 __all__ = [
     "AuditLogRepository",
@@ -27,9 +29,11 @@ __all__ = [
     "JobRepository",
     "ModelEndpointRepository",
     "OIDCSessionRepository",
+    "PartitionMembershipRepository",
     "PartitionRepository",
     "PresetRepository",
     "PromptRepository",
     "TopicTagRepository",
     "UserRepository",
+    "WorkspaceRepository",
 ]
