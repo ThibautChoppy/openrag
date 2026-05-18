@@ -92,3 +92,26 @@ class TestLifecycle:
             await store.shutdown()
         with pytest.raises(RuntimeError, match="initialize"):
             _ = store.pool
+
+    async def test_initialize_is_idempotent_no_remigrate(self, test_rdb_config: RDBConfig):
+        # ``get_vectordb()`` re-invokes the actor's initialize on every
+        # request (it is a FastAPI ``Depends``). Re-running must NOT re-run
+        # Alembic — a per-request migration storm starves the PG pool and
+        # surfaces as 500s under load (regression for the api-tests flake).
+        store = PostgresStore(test_rdb_config)
+        calls = 0
+        original = store._conn.run_migrations  # noqa: SLF001
+
+        async def counting_run_migrations() -> None:
+            nonlocal calls
+            calls += 1
+            await original()
+
+        store._conn.run_migrations = counting_run_migrations  # type: ignore[method-assign]  # noqa: SLF001
+        try:
+            await store.initialize()
+            await store.initialize()
+            await store.initialize()
+            assert calls == 1
+        finally:
+            await store.shutdown()

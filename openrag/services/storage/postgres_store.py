@@ -70,6 +70,7 @@ class PostgresStore(CatalogStore):
     def __init__(self, config: RDBConfig, *, run_migrations: bool = True) -> None:
         self._conn = ConnectionManager(config)
         self._run_migrations = run_migrations
+        self._initialized = False
 
         # Repositories take a pool_getter callable instead of a pool reference
         # so they always see the live pool even if ConnectionManager is
@@ -102,18 +103,29 @@ class PostgresStore(CatalogStore):
     async def initialize(self) -> None:
         """Open the asyncpg pool, then upgrade the schema to ``head``.
 
+        Idempotent: ``get_vectordb()`` re-invokes the actor's ``initialize``
+        on every request (it is a FastAPI ``Depends``), and the documented
+        contract is that re-running on a hot actor is a no-op. Without the
+        ``_initialized`` guard each request would re-run a full Alembic
+        ``command.upgrade``, which under concurrent load starves the Postgres
+        pool and surfaces as 500s.
+
         Order matters: the pool must exist before Alembic runs because the
         legacy ``PartitionFileManager`` bootstrapped tables synchronously via
         ``Base.metadata.create_all`` *before* migrations. The Phase 7
         migrations therefore guard every DDL with an inspector check, which
         keeps re-runs safe regardless of pool state.
         """
+        if self._initialized:
+            return
         await self._conn.initialize()
         if self._run_migrations:
             await self._conn.run_migrations()
+        self._initialized = True
 
     async def shutdown(self) -> None:
         await self._conn.shutdown()
+        self._initialized = False
 
     # ------------------------------------------------------------------
     # Connection access (escape hatch for Phase 8 orchestrators)
