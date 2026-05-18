@@ -41,12 +41,12 @@ class AudioTranscriber:
         # size inflation from WAV conversion (Scaleway cap: 100 MB; OpenAI: 25 MB).
         # Everything else falls back to WAV for vLLM/libsndfile deployments.
 
+        tmp_wav = None
         try:
             logger.bind(file=file_path.name)
             suffix = file_path.suffix.lower()
             if suffix in self.direct_upload_suffixes:
                 wav_path = file_path
-                tmp_wav = None
                 # We still need to load the audio so language detection can
                 # extract its 30-second sample. ``AudioSegment.from_file``
                 # uses ffmpeg under the hood, so it handles every format.
