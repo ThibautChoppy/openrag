@@ -37,6 +37,7 @@ from services.persistence.idempotency_repo import PgIdempotencyRepository
 from services.persistence.job_repo import PgJobRepository
 from services.persistence.model_endpoint_repo import PgModelEndpointRepository
 from services.persistence.oidc_session_repo import PgOIDCSessionRepository
+from services.persistence.partition_membership_repo import PgPartitionMembershipRepository
 from services.persistence.partition_repo import PgPartitionRepository
 from services.persistence.preset_repo import PgPresetRepository
 from services.persistence.prompt_repo import PgPromptRepository
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
     from core.ports.job_repo import JobRepository
     from core.ports.model_endpoint_repo import ModelEndpointRepository
     from core.ports.oidc_session_repo import OIDCSessionRepository
+    from core.ports.partition_membership_repo import PartitionMembershipRepository
     from core.ports.partition_repo import PartitionRepository
     from core.ports.preset_repo import PresetRepository
     from core.ports.prompt_repo import PromptRepository
@@ -80,6 +82,7 @@ class PostgresStore(CatalogStore):
         self._document_repo = PgDocumentRepository(pool_getter)
         self._user_repo = PgUserRepository(pool_getter)
         self._partition_repo = PgPartitionRepository(pool_getter)
+        self._membership_repo = PgPartitionMembershipRepository(pool_getter)
         self._oidc_session_repo = PgOIDCSessionRepository(pool_getter)
         self._workspace_repo = PgWorkspaceRepository(pool_getter)
 
@@ -157,6 +160,10 @@ class PostgresStore(CatalogStore):
     @property
     def partition_repo(self) -> PartitionRepository:
         return self._partition_repo
+
+    @property
+    def membership_repo(self) -> PartitionMembershipRepository:
+        return self._membership_repo
 
     @property
     def oidc_session_repo(self) -> OIDCSessionRepository:

@@ -9,8 +9,8 @@ Public entry points:
     - Repositories (7A.2):
         - Real (decomposed from ``PartitionFileManager``):
             ``PgDocumentRepository``, ``PgUserRepository``,
-            ``PgPartitionRepository``, ``PgOIDCSessionRepository``,
-            ``PgWorkspaceRepository``.
+            ``PgPartitionRepository``, ``PgPartitionMembershipRepository``,
+            ``PgOIDCSessionRepository``, ``PgWorkspaceRepository``.
         - Stubs (post-refactoring features — raise
           :class:`StubRepositoryError` on every call):
             ``PgJobRepository``, ``PgChunkRepository``,
@@ -31,6 +31,7 @@ from services.persistence.idempotency_repo import PgIdempotencyRepository
 from services.persistence.job_repo import PgJobRepository
 from services.persistence.model_endpoint_repo import PgModelEndpointRepository
 from services.persistence.oidc_session_repo import PgOIDCSessionRepository
+from services.persistence.partition_membership_repo import PgPartitionMembershipRepository
 from services.persistence.partition_repo import PgPartitionRepository
 from services.persistence.preset_repo import PgPresetRepository
 from services.persistence.prompt_repo import PgPromptRepository
@@ -50,6 +51,7 @@ __all__ = [
     "PgJobRepository",
     "PgModelEndpointRepository",
     "PgOIDCSessionRepository",
+    "PgPartitionMembershipRepository",
     "PgPartitionRepository",
     "PgPresetRepository",
     "PgPromptRepository",

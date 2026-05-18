@@ -967,7 +967,7 @@ class MilvusDB(BaseVectorDB):
         await self._check_user_exists(user_id)
         user_partitions = [
             p["partition"]
-            for p in await self._catalog_store.user_repo.list_user_partitions_dict(user_id)
+            for p in await self._catalog_store.membership_repo.list_user_partitions_dict(user_id)
             if p["role"] == "owner"
         ]
         for partition in user_partitions:
@@ -1002,7 +1002,7 @@ class MilvusDB(BaseVectorDB):
 
     async def list_user_partitions(self, user_id: int):
         await self._check_user_exists(user_id)
-        return await self._catalog_store.user_repo.list_user_partitions_dict(user_id)
+        return await self._catalog_store.membership_repo.list_user_partitions_dict(user_id)
 
     # ------------------------------------------------------------------
     # OIDC — exposed on the Ray actor (thin delegations)
@@ -1072,11 +1072,11 @@ class MilvusDB(BaseVectorDB):
 
     async def list_partition_members(self, partition: str) -> list[dict]:
         await self._check_partition_exists(partition)
-        return await self._catalog_store.user_repo.list_partition_members(partition)
+        return await self._catalog_store.membership_repo.list_partition_members(partition)
 
     async def update_partition_member_role(self, partition: str, user_id: int, new_role: str):
         await self._check_membership_exists(partition, user_id)
-        await self._catalog_store.user_repo.update_partition_member_role(partition, user_id, new_role)
+        await self._catalog_store.membership_repo.update_partition_member_role(partition, user_id, new_role)
         self.logger.info(f"User_id {user_id} role updated to '{new_role}' in partition '{partition}'.")
 
     async def create_partition(self, partition: str, user_id: int):
@@ -1087,12 +1087,12 @@ class MilvusDB(BaseVectorDB):
     async def add_partition_member(self, partition: str, user_id: int, role: str):
         await self._check_partition_exists(partition)
         await self._check_user_exists(user_id)
-        await self._catalog_store.user_repo.add_partition_member(partition, user_id, role)
+        await self._catalog_store.membership_repo.add_partition_member(partition, user_id, role)
         self.logger.info(f"User_id {user_id} added to partition '{partition}'.")
 
     async def remove_partition_member(self, partition: str, user_id: int) -> bool:
         await self._check_membership_exists(partition, user_id)
-        await self._catalog_store.user_repo.remove_partition_member(partition, user_id)
+        await self._catalog_store.membership_repo.remove_partition_member(partition, user_id)
         self.logger.info(f"User_id {user_id} removed from partition '{partition}'.")
 
     async def _check_user_exists(self, user_id: int):
@@ -1116,7 +1116,7 @@ class MilvusDB(BaseVectorDB):
     async def _check_membership_exists(self, partition: str, user_id: int):
         await self._check_partition_exists(partition)
         await self._check_user_exists(user_id)
-        if not await self._catalog_store.user_repo.user_is_partition_member(user_id, partition):
+        if not await self._catalog_store.membership_repo.user_is_partition_member(user_id, partition):
             raise VDBMembershipNotFound(
                 f"User with ID {user_id} is not a member of partition '{partition}'.",
                 collection_name=self.collection_name,

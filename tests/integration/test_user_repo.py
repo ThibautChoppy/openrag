@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from core.models.user import PartitionRole, User, UserPartition
+from core.models.user import User
 from services.persistence.user_repo import _hash_token
 from services.storage.postgres_store import PostgresStore
 
@@ -149,41 +149,3 @@ class TestUpdateDelete:
             _user(display_name="B", email="b@example.com"),
         )
         assert await postgres_store.user_repo.count_users() == 2
-
-
-class TestPartitionMemberships:
-    async def test_assign_then_list(self, postgres_store: PostgresStore):
-        user = await postgres_store.user_repo.create_user(_user())
-        await postgres_store.partition_repo.create_partition("docs")
-        await postgres_store.user_repo.assign_partition(
-            UserPartition(user_id=user.id, partition="docs", role=PartitionRole.OWNER),
-        )
-        memberships = await postgres_store.user_repo.list_user_partitions(user.id)
-        assert len(memberships) == 1
-        assert memberships[0].partition == "docs"
-        assert memberships[0].role == PartitionRole.OWNER
-
-    async def test_assign_is_idempotent_and_updates_role(
-        self,
-        postgres_store: PostgresStore,
-    ):
-        user = await postgres_store.user_repo.create_user(_user())
-        await postgres_store.partition_repo.create_partition("docs")
-        await postgres_store.user_repo.assign_partition(
-            UserPartition(user_id=user.id, partition="docs", role=PartitionRole.VIEWER),
-        )
-        await postgres_store.user_repo.assign_partition(
-            UserPartition(user_id=user.id, partition="docs", role=PartitionRole.OWNER),
-        )
-        memberships = await postgres_store.user_repo.list_user_partitions(user.id)
-        assert len(memberships) == 1
-        assert memberships[0].role == PartitionRole.OWNER
-
-    async def test_remove_partition(self, postgres_store: PostgresStore):
-        user = await postgres_store.user_repo.create_user(_user())
-        await postgres_store.partition_repo.create_partition("docs")
-        await postgres_store.user_repo.assign_partition(
-            UserPartition(user_id=user.id, partition="docs"),
-        )
-        assert await postgres_store.user_repo.remove_partition(user.id, "docs") is True
-        assert await postgres_store.user_repo.list_user_partitions(user.id) == []

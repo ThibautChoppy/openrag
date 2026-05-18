@@ -1,13 +1,18 @@
 """Postgres implementation of :class:`UserRepository`.
 
-Backs three tables — ``users``, ``partition_memberships`` and (when the
-post-refactoring ``api_keys`` table lands) ``api_keys``. The legacy
+Backs the ``users`` table (and, when the post-refactoring ``api_keys``
+table lands, ``api_keys``). The legacy
 :class:`components.indexer.vectordb.utils.PartitionFileManager` exposed
 eleven user-shaped methods (``create_user``, ``get_user_by_id``,
 ``get_user_by_token``, ``delete_user``, ``update_user``, ``list_users``,
 ``regenerate_user_token``, ``user_exists``, ``get_user_by_external_id``,
-``update_user_fields``, ``_ensure_admin_user``) and six membership
-methods; all seventeen map onto this class.
+``update_user_fields``, ``_ensure_admin_user``) which map onto this class.
+The six partition-membership methods moved to
+:class:`~services.persistence.partition_membership_repo.PgPartitionMembershipRepository`
+(7A.2 one-repo-per-entity layout). This class still *reads*
+``partition_memberships`` via :meth:`_fetch_memberships` to hydrate the
+``User`` aggregate's ``partitions`` field — a read-only denormalisation
+inside the user aggregate boundary, not membership management.
 
 Notes on the schema vs. the port:
 
@@ -201,87 +206,6 @@ class PgUserRepository(UserRepository):
             "api_keys table is on the post-refactoring roadmap; use users.token until then.",
         )
 
-    # ── Partition memberships ────────────────────────────────────────
-
-    async def assign_partition(self, assignment: UserPartition) -> UserPartition:
-        """Idempotent upsert of (partition, user_id) → role.
-
-        Returns the row as actually persisted (re-reads the DB so the
-        timestamp reflects what's on disk).
-        """
-        await self.pool.execute(
-            """
-            INSERT INTO partition_memberships (partition_name, user_id, role, added_at)
-            VALUES ($1, $2, $3, NOW())
-            ON CONFLICT (partition_name, user_id)
-              DO UPDATE SET role = EXCLUDED.role
-            """,
-            assignment.partition,
-            assignment.user_id,
-            assignment.role.value,
-        )
-        row = await self.pool.fetchrow(
-            """
-            SELECT * FROM partition_memberships
-            WHERE partition_name = $1 AND user_id = $2
-            """,
-            assignment.partition,
-            assignment.user_id,
-        )
-        return self._row_to_user_partition(row)
-
-    async def remove_partition(self, user_id: int, partition: str) -> bool:
-        result = await self.pool.execute(
-            """
-            DELETE FROM partition_memberships
-            WHERE user_id = $1 AND partition_name = $2
-            """,
-            user_id,
-            partition,
-        )
-        return result.endswith(" 1")
-
-    async def list_user_partitions(self, user_id: int) -> list[UserPartition]:
-        rows = await self.pool.fetch(
-            "SELECT * FROM partition_memberships WHERE user_id = $1 ORDER BY added_at",
-            user_id,
-        )
-        return [self._row_to_user_partition(r) for r in rows]
-
-    async def list_partition_users(self, partition: str) -> list[UserPartition]:
-        rows = await self.pool.fetch(
-            """
-            SELECT * FROM partition_memberships
-            WHERE partition_name = $1
-            ORDER BY added_at
-            """,
-            partition,
-        )
-        return [self._row_to_user_partition(r) for r in rows]
-
-    async def update_partition_role(
-        self,
-        user_id: int,
-        partition: str,
-        role: PartitionRole,
-    ) -> bool:
-        result = await self.pool.execute(
-            """
-            UPDATE partition_memberships SET role = $3
-            WHERE user_id = $1 AND partition_name = $2
-            """,
-            user_id,
-            partition,
-            role.value,
-        )
-        return result.endswith(" 1")
-
-    async def count_partition_users(self, partition: str) -> int:
-        return await self.pool.fetchval(
-            "SELECT COUNT(*)::int FROM partition_memberships WHERE partition_name = $1",
-            partition,
-        )
-
     # ── Legacy method names used by the Phase 7C shim ────────────────
 
     async def create_legacy_user(
@@ -448,121 +372,6 @@ class PgUserRepository(UserRepository):
         )
         if not result.endswith(" 1"):
             raise ValueError(f"User {user_id} not found")
-
-    async def list_partition_members(self, partition: str) -> list[dict]:
-        """TODO(phase-9): remove. Returns empty list when the partition does not exist."""
-        exists = await self.pool.fetchval(
-            "SELECT 1 FROM partitions WHERE partition = $1",
-            partition,
-        )
-        if not exists:
-            return []
-        rows = await self.pool.fetch(
-            """
-            SELECT * FROM partition_memberships
-            WHERE partition_name = $1
-            ORDER BY added_at
-            """,
-            partition,
-        )
-        return [
-            {
-                "user_id": r["user_id"],
-                "role": r["role"],
-                "added_at": r["added_at"].isoformat() if r["added_at"] else None,
-            }
-            for r in rows
-        ]
-
-    async def add_partition_member(self, partition: str, user_id: int, role: str) -> bool:
-        """TODO(phase-9): remove. Creates the partition row on first use."""
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    """
-                    INSERT INTO partitions (partition, created_at)
-                    VALUES ($1, NOW())
-                    ON CONFLICT (partition) DO NOTHING
-                    """,
-                    partition,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO partition_memberships
-                        (partition_name, user_id, role, added_at)
-                    VALUES ($1, $2, $3, NOW())
-                    ON CONFLICT (partition_name, user_id)
-                      DO UPDATE SET role = EXCLUDED.role
-                    """,
-                    partition,
-                    user_id,
-                    role,
-                )
-        return True
-
-    async def remove_partition_member(self, partition: str, user_id: int) -> bool:
-        """TODO(phase-9): remove."""
-        result = await self.pool.execute(
-            """
-            DELETE FROM partition_memberships
-            WHERE partition_name = $1 AND user_id = $2
-            """,
-            partition,
-            user_id,
-        )
-        return result.endswith(" 1")
-
-    async def update_partition_member_role(
-        self,
-        partition: str,
-        user_id: int,
-        new_role: str,
-    ) -> bool:
-        """TODO(phase-9): remove."""
-        result = await self.pool.execute(
-            """
-            UPDATE partition_memberships SET role = $3
-            WHERE partition_name = $1 AND user_id = $2
-            """,
-            partition,
-            user_id,
-            new_role,
-        )
-        return result.endswith(" 1")
-
-    async def user_is_partition_member(self, user_id: int, partition: str) -> bool:
-        """TODO(phase-9): remove."""
-        return await self.pool.fetchval(
-            """
-            SELECT EXISTS (
-                SELECT 1 FROM partition_memberships
-                WHERE user_id = $1 AND partition_name = $2
-            )
-            """,
-            user_id,
-            partition,
-        )
-
-    async def list_user_partitions_dict(self, user_id: int) -> list[dict]:
-        """TODO(phase-9): remove. Legacy ``Partition.to_dict()``-style rows."""
-        rows = await self.pool.fetch(
-            """
-            SELECT p.partition, p.created_at, m.role
-            FROM partitions p
-            JOIN partition_memberships m
-              ON m.partition_name = p.partition
-            WHERE m.user_id = $1
-            """,
-            user_id,
-        )
-        return [
-            {
-                "partition": r["partition"],
-                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                "role": r["role"],
-            }
-            for r in rows
-        ]
 
     async def ensure_admin_user(self, admin_token: str | None) -> str:
         """TODO(phase-9): remove. Bootstrap mirror of the legacy admin-bootstrap.

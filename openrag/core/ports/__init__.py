@@ -10,6 +10,7 @@ from .idempotency_repo import IdempotencyRepository
 from .job_repo import JobRepository
 from .model_endpoint_repo import ModelEndpointRepository
 from .oidc_session_repo import OIDCSessionRepository
+from .partition_membership_repo import PartitionMembershipRepository
 from .partition_repo import PartitionRepository
 from .preset_repo import PresetRepository
 from .prompt_repo import PromptRepository
@@ -28,6 +29,7 @@ __all__ = [
     "JobRepository",
     "ModelEndpointRepository",
     "OIDCSessionRepository",
+    "PartitionMembershipRepository",
     "PartitionRepository",
     "PresetRepository",
     "PromptRepository",

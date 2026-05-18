@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from core.ports.job_repo import JobRepository
     from core.ports.model_endpoint_repo import ModelEndpointRepository
     from core.ports.oidc_session_repo import OIDCSessionRepository
+    from core.ports.partition_membership_repo import PartitionMembershipRepository
     from core.ports.partition_repo import PartitionRepository
     from core.ports.preset_repo import PresetRepository
     from core.ports.prompt_repo import PromptRepository
@@ -127,6 +128,10 @@ class ServiceContainer:
     @property
     def partition_repo(self) -> PartitionRepository:
         return self.catalog_store.partition_repo
+
+    @property
+    def membership_repo(self) -> PartitionMembershipRepository:
+        return self.catalog_store.membership_repo
 
     @property
     def oidc_session_repo(self) -> OIDCSessionRepository:
