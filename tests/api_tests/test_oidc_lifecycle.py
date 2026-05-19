@@ -206,13 +206,15 @@ class _StubVectorDB:
         return row
 
     def _impl_get_oidc_session_by_token(self, session_token_plain: str):
-        sid_key = self._sessions_by_token.get(session_token_plain)
-        if sid_key is None:
-            return None
-        row = self._sessions[sid_key]
-        if row.get("revoked_at"):
-            return None
-        return row
+        # Faithful to production: PartitionFileManager.get_oidc_session_by_token
+        # hashes the plaintext and matches on session_token_hash. Post-Phase-8
+        # the row is written by AuthService via the repo adapter (hash only),
+        # so the legacy plaintext index no longer applies.
+        token_hash = hash_session_token(session_token_plain)
+        for row in self._sessions.values():
+            if row.get("session_token_hash") == token_hash and not row.get("revoked_at"):
+                return row
+        return None
 
     def _impl_get_user(self, user_id: int):
         return self._users_by_id.get(user_id)
@@ -250,13 +252,121 @@ def _install_stubs():
 
 _install_stubs()
 
-# Reload auth deps + routers after stub installation
-from components.auth import deps as _auth_deps  # noqa: E402
+# Reload routers after stub installation. Post-Phase-8 the auth/users routers
+# resolve AuthService/UserService from the DI providers, so we import the
+# provider symbols here (di.providers is not popped, so these are the same
+# function objects the routers close over) to key dependency_overrides.
+from components.auth import OIDCClient  # noqa: E402
+from components.auth.session_tokens import hash_session_token  # noqa: E402
+from core.config.auth import OIDCConfig  # noqa: E402
+from core.models.user import OIDCSession, User  # noqa: E402
+from di.providers import get_auth_service, get_user_service  # noqa: E402
+from services.orchestrators.auth_service import AuthService  # noqa: E402
+from services.orchestrators.user_service import UserService  # noqa: E402
 
 sys.modules.pop("routers.auth", None)
 sys.modules.pop("routers.users", None)
 _auth_router_mod = importlib.import_module("routers.auth")
 _users_router_mod = importlib.import_module("routers.users")
+
+
+# ---------------------------------------------------------------------------
+# Phase-8 repository-port adapters over the shared _StubVectorDB state.
+# AuthService/UserService take repo ports, not the Ray vdb actor; these
+# wrap the same dicts the auth middleware reads through _StubVectorDB so a
+# session created by AuthService is visible to the middleware and vice-versa.
+# ---------------------------------------------------------------------------
+
+
+class _StubUserRepo:
+    def __init__(self, vdb: _StubVectorDB):
+        self._vdb = vdb
+
+    @staticmethod
+    def _to_user(d: dict | None) -> User | None:
+        if d is None:
+            return None
+        return User(
+            id=d["id"],
+            display_name=d.get("display_name"),
+            external_user_id=d.get("external_user_id"),
+            email=d.get("email"),
+            is_admin=d.get("is_admin", False),
+        )
+
+    async def get_user_by_external_id(self, external_id: str) -> User | None:
+        return self._to_user(self._vdb._users_by_sub.get(external_id))
+
+    async def get_user(self, user_id: int) -> User | None:
+        return self._to_user(self._vdb._users_by_id.get(user_id))
+
+    async def create_user(self, user: User) -> User:
+        new_id = max(self._vdb._users_by_id, default=0) + 1
+        user.id = new_id
+        rec = {
+            "id": new_id,
+            "email": user.email,
+            "external_user_id": user.external_user_id,
+            "is_admin": user.is_admin,
+            "display_name": user.display_name,
+        }
+        self._vdb._users_by_id[new_id] = rec
+        if user.external_user_id:
+            self._vdb._users_by_sub[user.external_user_id] = rec
+        return user
+
+    async def update_user(self, user_id: int, **fields) -> User | None:
+        rec = self._vdb._users_by_id.get(user_id)
+        if rec is None:
+            return None
+        for k, v in fields.items():
+            rec[k] = v
+        return self._to_user(rec)
+
+
+class _StubOIDCSessionRepo:
+    def __init__(self, vdb: _StubVectorDB):
+        self._vdb = vdb
+
+    async def create_session(self, session: OIDCSession) -> OIDCSession:
+        sid_key = self._vdb._next_session_id
+        self._vdb._next_session_id += 1
+        session.id = sid_key
+        self._vdb._sessions[sid_key] = {
+            "id": sid_key,
+            "user_id": session.user_id,
+            "sub": session.sub,
+            "sid": session.sid,
+            "session_token_hash": session.session_token_hash,
+            "id_token_encrypted": session.id_token_encrypted,
+            "access_token_encrypted": session.access_token_encrypted,
+            "refresh_token_encrypted": session.refresh_token_encrypted,
+            "access_token_expires_at": session.access_token_expires_at,
+            "session_expires_at": session.session_expires_at,
+            "created_at": session.created_at,
+            "last_refresh_at": None,
+            "revoked_at": None,
+        }
+        return session
+
+    async def get_by_token_hash(self, token_hash: str) -> OIDCSession | None:
+        for row in self._vdb._sessions.values():
+            if row.get("session_token_hash") == token_hash and not row.get("revoked_at"):
+                return OIDCSession(**{k: row.get(k) for k in OIDCSession.model_fields})
+        return None
+
+    async def revoke_session(self, session_id: int) -> bool:
+        self._vdb._impl_revoke_oidc_session_by_id(session_id)
+        return True
+
+    async def revoke_by_sid(self, sid: str) -> int:
+        return self._vdb._impl_revoke_oidc_sessions_by_sid(sid)
+
+
+class _StubJobService:
+    async def get_user_pending_task_count(self, user_id) -> int:
+        return 0
+
 
 # ---------------------------------------------------------------------------
 # Build the composite app (auth + users)
@@ -264,9 +374,13 @@ _users_router_mod = importlib.import_module("routers.users")
 
 
 def _make_app(router) -> tuple[FastAPI, TestClient]:
-    """Build a minimal FastAPI app combining auth + users routers, with a
-    respx MockRouter injected into the OIDCClient singleton. respx >= 0.22
-    exposes MockRouter + httpx.MockTransport(router.handler)."""
+    """Build a minimal FastAPI app combining the auth + users routers.
+
+    Post-Phase-8 the routers pull AuthService/UserService from the DI
+    providers, so rather than patching a client singleton we build the real
+    services over the shared _StubVectorDB state, inject a respx-mocked
+    OIDCClient, and override get_auth_service / get_user_service. respx >=
+    0.22 exposes MockRouter + httpx.MockTransport(router.handler)."""
     app = FastAPI()
 
     # Install the AuthMiddleware (from components.auth.middleware)
@@ -277,9 +391,7 @@ def _make_app(router) -> tuple[FastAPI, TestClient]:
     app.include_router(_auth_router_mod.router)
     app.include_router(_users_router_mod.router, prefix="/users")
 
-    # Override OIDCClient singleton with our mocked http transport.
-    _auth_deps.reset_oidc_client()
-    _auth_deps._client = _auth_router_mod.OIDCClient(
+    oidc_client = OIDCClient(
         issuer=ISSUER,
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
@@ -287,6 +399,37 @@ def _make_app(router) -> tuple[FastAPI, TestClient]:
         scopes=SCOPES,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(router.handler)),
     )
+    cfg = OIDCConfig(
+        enabled=True,
+        issuer_url=ISSUER,
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        scopes=SCOPES,
+        token_encryption_key=_FERNET_KEY,
+        claim_source="id_token",
+        claim_mapping="",
+        post_logout_redirect_uri="/",
+        auto_provision_login=False,
+    )
+    user_repo = _StubUserRepo(_stub_vdb)
+    auth_service = AuthService(
+        user_repo=user_repo,
+        oidc_session_repo=_StubOIDCSessionRepo(_stub_vdb),
+        membership_repo=object(),
+        oidc_client=oidc_client,
+        config=cfg,
+    )
+    user_service = UserService(
+        user_repo=user_repo,
+        auth_service=auth_service,
+        default_file_quota=10,
+        partition_service=object(),
+        membership_repo=object(),
+        job_service=_StubJobService(),
+    )
+    app.dependency_overrides[get_auth_service] = lambda: auth_service
+    app.dependency_overrides[get_user_service] = lambda: user_service
 
     client = TestClient(app, raise_server_exceptions=True)
     return app, client
@@ -317,7 +460,6 @@ def test_full_oidc_lifecycle(monkeypatch):
     monkeypatch.setenv("OIDC_POST_LOGOUT_REDIRECT_URI", "/")
     monkeypatch.delenv("OIDC_CLAIM_MAPPING", raising=False)
     monkeypatch.delenv("AUTH_TOKEN", raising=False)
-    _auth_deps.reset_oidc_client()
 
     # ── Pre-seed alice with the exact sub that the IdP mock will return ────────
     ALICE_SUB = "alice-sub"
