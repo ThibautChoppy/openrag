@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.conversion_service import ConversionService
     from services.orchestrators.indexing_service import IndexingService
     from services.orchestrators.job_service import JobService
     from services.orchestrators.partition_service import PartitionService
@@ -113,6 +114,7 @@ class ServiceContainer:
         self._query_service: QueryService | None = None
         self._indexing_service: IndexingService | None = None
         self._job_service: JobService | None = None
+        self._conversion_service: ConversionService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -399,6 +401,25 @@ class ServiceContainer:
 
             self._job_service = JobService(task_state_manager=get_task_state_manager())
         return self._job_service
+
+    @property
+    def conversion_service(self) -> ConversionService:
+        """ConversionService — lazily built, cached for the container's lifetime.
+
+        The serializer is the Ray-backed ``SerializerRayShim`` during the
+        Phase-8 shim period (Ray cleanup is Phase 9); the DocSerializer
+        actor is resolved lazily per call inside the shim.
+        """
+        if self._conversion_service is None:
+            from services.orchestrators.conversion_service import ConversionService
+            from services.storage.serializer_ray_shim import from_ray_namespace
+
+            self._conversion_service = ConversionService(
+                serializer=from_ray_namespace(),
+                vector_store=self.vector_store,
+                collection=self._settings.vectordb.collection_name,
+            )
+        return self._conversion_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

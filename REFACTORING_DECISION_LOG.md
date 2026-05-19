@@ -1287,6 +1287,32 @@ datetime — a transport type leaking into a service.
   temporal-field parsing into core (raise `ValidationError`, drop the
   module-level `load_config` and the `HTTPException`).
 
+**12. 8E ConversionService — serializer behind a `FileSerializer` port +
+shim; chunk lookup through the clean `VectorStore`.** Same pattern as
+8C/8D.1: new `core/indexing/serializer.py` ABC + `services/storage/
+serializer_ray_shim.py` wrapping the `DocSerializer` actor (it reuses
+the legacy `components...serialize_file` helper so the
+`call_ray_actor_with_timeout` behaviour the tools router relied on is
+preserved). `get_chunk` ports the legacy `get_chunk_by_id` onto
+`VectorStore.query_chunks_by_filter({"_id": int(chunk_id)})` and returns
+a plain `{"page_content", "metadata"}` dict (no LangChain `Document`),
+exactly as PartitionService reads chunks. Ctor deviates from the plan's
+`ConversionService(config=config)` → `(serializer, vector_store,
+collection)` (the `collection` extra is the established
+settings-supplied vector-store name); `config` dropped.
+- Why: the plan ctor is underspecified and the 8C/8D shim+port approach
+  is the established way to keep the orchestrator Ray-free (8H).
+- File save + cleanup IO, tool dispatch, and the byte-identical
+  `HTTPException` bodies (404 not-found, 403 forbidden, the tool-error
+  4xx/5xx mapping) stay in the thin routers.
+- Note: the legacy router's `task_id` came from
+  `ray.get_runtime_context().get_task_id()`; outside a Ray task that is
+  the driver context, so the shim passes a fixed `"tools-extract"`
+  fallback label (the serializer only uses it for logging / state keys —
+  no behavioural change).
+- **Flag for Phase 9:** delete `serializer_ray_shim.py`, have
+  ConversionService call the serializer stage directly.
+
 ---
 ## Template for future entries
 

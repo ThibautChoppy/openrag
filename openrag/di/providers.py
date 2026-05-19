@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request, status
 if TYPE_CHECKING:
     from di.container import ServiceContainer
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.conversion_service import ConversionService
     from services.orchestrators.indexing_service import IndexingService
     from services.orchestrators.job_service import JobService
     from services.orchestrators.partition_service import PartitionService
@@ -67,3 +68,7 @@ def get_indexing_service(request: Request) -> IndexingService:
 
 def get_job_service(request: Request) -> JobService:
     return get_container(request).job_service
+
+
+def get_conversion_service(request: Request) -> ConversionService:
+    return get_container(request).conversion_service
