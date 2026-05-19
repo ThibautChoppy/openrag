@@ -1384,6 +1384,19 @@ red after Phase 8; four root causes, all behaviour-preserving fixes:
   service via `dependency_overrides`: AUTH_MODE gate, delegation,
   cookie set/clear, `OIDCFlowError` mapping), matching the phase
   principle "logic tests move to the service".
+- *Search response lost `metadata.file_id` (5 API `test_search`
+  filtering failures, second pass).* `Chunk.from_langchain` lifts
+  `file_id`/`partition`/`page`/`_id` out of the free-form metadata into
+  typed `Chunk` fields; the thinned `routers/search.py:_documents`
+  returned only `Chunk.metadata`, so the API contract dropped
+  `metadata.file_id` (filter tests saw `file_id == None`; `origin` /
+  temporal fields survived because they stay free-form). Fix: shape the
+  response via `Chunk.to_langchain().metadata`, which merges the typed
+  fields back — reproducing the pre-Phase-8 router that returned the raw
+  Document metadata. Transport-only shaping, stays in the thin router.
+
+All five CI jobs (Layer guard, Linting, Unit, Integration, API) are
+green on the branch after these fixes.
 
 ---
 ## Template for future entries
