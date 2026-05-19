@@ -100,11 +100,11 @@ class TestCatalogStoreWiring:
 
     def test_database_name_derived_from_collection(self):
         c = ServiceContainer(_settings(database=None, collection="my_collection"))
-        assert c.catalog_store._conn._dsn.endswith("partitions_for_collection_my_collection")
+        assert c.catalog_store._conn._conn_kwargs["database"] == "partitions_for_collection_my_collection"
 
     def test_explicit_database_overrides_fallback(self):
         c = ServiceContainer(_settings(database="custom_db", collection="my_collection"))
-        assert c.catalog_store._conn._dsn.endswith("custom_db")
+        assert c.catalog_store._conn._conn_kwargs["database"] == "custom_db"
 
     @pytest.mark.parametrize(
         ("name", "port"),

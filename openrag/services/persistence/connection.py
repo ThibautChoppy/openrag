@@ -70,8 +70,18 @@ class ConnectionManager:
                 "RDBConfig.database is required for ConnectionManager — "
                 "set POSTGRES_DATABASE or wire it from the collection name."
             )
-        self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
-        # Kept separately so we never log the password.
+        # Passed to asyncpg as discrete kwargs rather than a single DSN
+        # string: a password containing URL-significant characters
+        # (``@ : / ? # %``) would corrupt a string DSN and silently point
+        # the pool at the wrong host or fail auth.
+        self._conn_kwargs = {
+            "host": config.host,
+            "port": config.port,
+            "user": config.user,
+            "password": config.password,
+            "database": config.database,
+        }
+        # Password-free string used only for logs / error messages.
         self._dsn_log = f"postgresql://{config.user}@{config.host}:{config.port}/{config.database}"
         self._min_size = config.pool_min_size
         self._max_size = config.pool_max_size
@@ -99,7 +109,7 @@ class ConnectionManager:
         for attempt in range(1, _RETRY_ATTEMPTS + 1):
             try:
                 self._pool = await asyncpg.create_pool(
-                    self._dsn,
+                    **self._conn_kwargs,
                     min_size=self._min_size,
                     max_size=self._max_size,
                     command_timeout=self._command_timeout,
@@ -144,17 +154,31 @@ class ConnectionManager:
         # installed (e.g. for type-checking in tooling).
         from alembic import command
         from alembic.config import Config
+        from sqlalchemy import URL
 
         if not _ALEMBIC_INI.exists():
             raise FileNotFoundError(
                 f"Alembic config not found at {_ALEMBIC_INI}; did the migrations move?",
             )
 
+        # Build the URL through SQLAlchemy so credentials with special
+        # characters are percent-encoded correctly. Alembic stores the
+        # value in a ConfigParser and reads it back with ``%``-interpolation,
+        # so escape literal ``%`` as ``%%`` to survive that round-trip.
+        db_url = URL.create(
+            "postgresql",
+            username=self._conn_kwargs["user"],
+            password=self._conn_kwargs["password"],
+            host=self._conn_kwargs["host"],
+            port=self._conn_kwargs["port"],
+            database=self._conn_kwargs["database"],
+        ).render_as_string(hide_password=False)
+
         cfg = Config(str(_ALEMBIC_INI))
         # ``script_location`` in alembic.ini is relative to the .ini file via
         # %(here)s, so this resolves to services/persistence/migrations/alembic/.
         cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
-        cfg.set_main_option("sqlalchemy.url", self._dsn)
+        cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
         logger.info(f"Running Alembic migrations against {self._dsn_log}")
         try:
             command.upgrade(cfg, "head")
