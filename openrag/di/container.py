@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.user_service import UserService
 
 
 _NO_SETTINGS_MESSAGE = (
@@ -99,6 +100,7 @@ class ServiceContainer:
         self._catalog_store: CatalogStore | None = create_catalog_store(settings) if settings is not None else None
         self._vector_store: VectorStore | None = create_vector_store(settings) if settings is not None else None
         self._auth_service: AuthService | None = None
+        self._user_service: UserService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -236,6 +238,19 @@ class ServiceContainer:
                 config=cfg,
             )
         return self._auth_service
+
+    @property
+    def user_service(self) -> UserService:
+        """UserService — lazily built, cached for the container's lifetime."""
+        if self._user_service is None:
+            from services.orchestrators.user_service import UserService
+
+            self._user_service = UserService(
+                user_repo=self.user_repo,
+                auth_service=self.auth_service,
+                default_file_quota=self._settings.rdb.default_file_quota,
+            )
+        return self._user_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

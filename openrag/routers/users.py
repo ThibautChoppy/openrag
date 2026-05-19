@@ -1,7 +1,24 @@
+"""User management routes — thin HTTP layer over :class:`UserService`.
+
+Phase 8A.2: business logic (validation, default-quota rule, existence /
+not-found semantics, repo delegation) moved to
+``services.orchestrators.user_service.UserService``. This module keeps
+HTTP transport only: request-scoped authorization (the shared FastAPI
+``Depends`` wrappers in ``routers/utils.py``, retired in a later phase),
+the two ``id == 1`` guard rules whose exact ``{"detail": ...}`` body the
+legacy endpoints returned via ``HTTPException``, and response shaping.
+
+``GET /users/info`` stays here unchanged — it computes effective quota
+from the ``TaskStateManager`` Ray actor, which orchestrators must not
+touch (Phase 8H); it will move to a service once the queue is de-Ray'd.
+"""
+
+from di.providers import get_user_service
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from models.user import UserCreate, UserPublic, UserUpdate
-from utils.dependencies import get_task_state_manager, get_vectordb
+from services.orchestrators.user_service import UserService
+from utils.dependencies import get_task_state_manager
 from utils.logger import get_logger
 
 from .utils import DEFAULT_FILE_QUOTA, current_user, require_admin, require_admin_or_self
@@ -28,9 +45,11 @@ Returns list of all users with:
 **Note:** User tokens are not included in the response.
 """,
 )
-async def list_users(vectordb=Depends(get_vectordb), admin_user=Depends(require_admin)):
-    users = await vectordb.list_users.remote()
-    logger.debug("Returned list of users.", user_count=len(users))
+async def list_users(
+    admin_user=Depends(require_admin),
+    service: UserService = Depends(get_user_service),
+):
+    users = await service.list_users()
     return JSONResponse(status_code=status.HTTP_200_OK, content={"users": users})
 
 
@@ -125,14 +144,11 @@ Returns created user including:
 )
 async def create_user(
     body: UserCreate,
-    vectordb=Depends(get_vectordb),
     admin_user=Depends(require_admin),
+    service: UserService = Depends(get_user_service),
 ):
-    """
-    Create a new user and generate a token.
-    """
-    user = await vectordb.create_user.remote(body)
-    logger.info("Created new user", user_id=user["id"])
+    """Create a new user and generate a token."""
+    user = await service.create_user(body)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=user)
 
 
@@ -157,11 +173,13 @@ Returns user details including:
 **Note:** User token is not included in the response.
 """,
 )
-async def get_user(user_id: int, vectordb=Depends(get_vectordb), admin_user=Depends(require_admin)):
-    """
-    Get details of a specific user (without exposing token).
-    """
-    user = await vectordb.get_user.remote(user_id)
+async def get_user(
+    user_id: int,
+    admin_user=Depends(require_admin),
+    service: UserService = Depends(get_user_service),
+):
+    """Get details of a specific user (without exposing token)."""
+    user = await service.get_user(user_id)
     return JSONResponse(status_code=status.HTTP_200_OK, content=user)
 
 
@@ -186,16 +204,18 @@ Returns 204 No Content on successful deletion.
 **Note:** Cannot delete the default admin user (ID: 1).
 """,
 )
-async def delete_user(user_id: int, vectordb=Depends(get_vectordb), admin_user=Depends(require_admin)):
-    """
-    Delete a user.
-    """
+async def delete_user(
+    user_id: int,
+    admin_user=Depends(require_admin),
+    service: UserService = Depends(get_user_service),
+):
+    """Delete a user."""
     if user_id == 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete default admin user.",
         )
-    await vectordb.delete_user.remote(user_id)
+    await service.delete_user(user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -225,19 +245,11 @@ Returns user details including the new token:
 )
 async def regenerate_user_token(
     user_id: int,
-    vectordb=Depends(get_vectordb),
     _auth=Depends(require_admin_or_self),
+    service: UserService = Depends(get_user_service),
 ):
-    """
-    Regenerate a user's token.
-    """
-    user = await vectordb.regenerate_user_token.remote(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User '{user_id}' not found",
-        )
-    logger.info("Regenerated user token", user_id=user_id)
+    """Regenerate a user's token."""
+    user = await service.regenerate_token(user_id)
     return JSONResponse(status_code=status.HTTP_200_OK, content=user)
 
 
@@ -274,18 +286,14 @@ Returns updated user details including:
 async def update_user(
     user_id: int,
     body: UserUpdate,
-    vectordb=Depends(get_vectordb),
     admin_user=Depends(require_admin),
+    service: UserService = Depends(get_user_service),
 ) -> UserPublic:
-    """
-    Update a user's profile fields.
-    """
-    # Only block if is_admin was explicitly set to False in the request
+    """Update a user's profile fields."""
+    # Only block if is_admin was explicitly set to False in the request.
     if user_id == 1 and "is_admin" in body.model_fields_set and body.is_admin is False:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot revoke admin privileges from the default admin user.",
         )
-    user = await vectordb.update_user.remote(user_id, body)
-    logger.info("Updated user info", user_id=user_id)
-    return user
+    return await service.update_user(user_id, body)

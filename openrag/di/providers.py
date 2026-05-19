@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request, status
 if TYPE_CHECKING:
     from di.container import ServiceContainer
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.user_service import UserService
 
 
 def get_container(request: Request) -> ServiceContainer:
@@ -32,3 +33,7 @@ def get_container(request: Request) -> ServiceContainer:
 
 def get_auth_service(request: Request) -> AuthService:
     return get_container(request).auth_service
+
+
+def get_user_service(request: Request) -> UserService:
+    return get_container(request).user_service
