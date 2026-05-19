@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from core.ports.user_repo import UserRepository
     from models.user import UserCreate, UserUpdate
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.job_service import JobService
     from services.orchestrators.partition_service import PartitionService
 
 logger = get_logger()
@@ -53,6 +54,7 @@ class UserService:
         default_file_quota: int,
         partition_service: PartitionService,
         membership_repo: PartitionMembershipRepository,
+        job_service: JobService,
     ) -> None:
         self._user_repo = user_repo
         # Injected per the Phase 8 prescribed signature: the place future
@@ -69,6 +71,12 @@ class UserService:
         # PartitionService, so UserService composes it.
         self._partition_service = partition_service
         self._membership_repo = membership_repo
+        # /users/info reports quota usage = indexed files + pending
+        # indexing tasks. The pending count comes from the TaskStateManager
+        # actor, which JobService wraps (8H excepts JobService, not
+        # UserService) — so UserService composes JobService rather than
+        # holding a Ray handle itself.
+        self._job_service = job_service
 
     # ------------------------------------------------------------------
     # Validation
@@ -111,6 +119,38 @@ class UserService:
         )
         logger.info("Created new user", user_id=user["id"])
         return user
+
+    async def get_current_user_info(self, user: dict) -> dict:
+        """Augment the authenticated user with the quota-usage block.
+
+        ``user`` is the request-state dict the auth middleware set (no DB
+        fetch — identical to the legacy ``/users/info`` handler). Quota
+        rule, byte-for-byte: admins and a negative global default mean
+        unlimited; a ``None`` per-user quota falls back to the global
+        default; a negative per-user quota means unlimited. ``file_quota``
+        is surfaced as ``-1`` when unlimited.
+        """
+        is_admin = user.get("is_admin", False)
+        if is_admin or self._default_file_quota < 0:
+            user_quota: float | int = float("inf")
+        else:
+            user_quota = user.get("file_quota", None)
+            if user_quota is None:
+                user_quota = self._default_file_quota
+            elif user_quota < 0:
+                user_quota = float("inf")
+
+        file_count = user.get("file_count", 0)
+        pending_count = await self._job_service.get_user_pending_task_count(user.get("id"))
+        total = file_count + pending_count
+
+        return {
+            **user,
+            "file_count": file_count,
+            "pending_files": pending_count,
+            "total_files": total,
+            "file_quota": -1 if user_quota == float("inf") else user_quota,
+        }
 
     async def list_users(self) -> list[dict]:
         users = await self._user_repo.list_users_dict()

@@ -265,6 +265,7 @@ class ServiceContainer:
                 default_file_quota=self._settings.rdb.default_file_quota,
                 partition_service=self.partition_service,
                 membership_repo=self.membership_repo,
+                job_service=self.job_service,
             )
         return self._user_service
 

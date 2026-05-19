@@ -71,12 +71,23 @@ class FakeMembershipRepo:
         return self._owned.get(user_id, [])
 
 
+class FakeJobService:
+    def __init__(self, pending: int = 0):
+        self._pending = pending
+        self.calls: list[int | None] = []
+
+    async def get_user_pending_task_count(self, user_id: int | None) -> int:
+        self.calls.append(user_id)
+        return self._pending
+
+
 def _svc(
     repo: FakeUserRepo,
     *,
     default_quota: int = 10,
     partition_service: FakePartitionService | None = None,
     membership_repo: FakeMembershipRepo | None = None,
+    job_service: FakeJobService | None = None,
 ) -> UserService:
     return UserService(
         user_repo=repo,
@@ -84,6 +95,7 @@ def _svc(
         default_file_quota=default_quota,
         partition_service=partition_service or FakePartitionService(),
         membership_repo=membership_repo or FakeMembershipRepo(),
+        job_service=job_service or FakeJobService(),
     )
 
 
@@ -244,3 +256,45 @@ async def test_update_user_validates_email():
     repo = FakeUserRepo(existing={2})
     with pytest.raises(ValidationError):
         await _svc(repo).update_user(2, UserUpdate(email="bogus"))
+
+
+# --------------------------------------------------------------------------- #
+# get_current_user_info — quota-usage block (8F: moved out of the router)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_current_user_info_specific_quota_and_pending():
+    job = FakeJobService(pending=3)
+    svc = _svc(FakeUserRepo(), default_quota=10, job_service=job)
+
+    out = await svc.get_current_user_info({"id": 7, "is_admin": False, "file_quota": 5, "file_count": 4})
+
+    assert out["file_count"] == 4
+    assert out["pending_files"] == 3
+    assert out["total_files"] == 7
+    assert out["file_quota"] == 5
+    assert out["id"] == 7  # original fields preserved
+    assert job.calls == [7]
+
+
+@pytest.mark.asyncio
+async def test_current_user_info_admin_is_unlimited():
+    svc = _svc(FakeUserRepo(), default_quota=10, job_service=FakeJobService(pending=1))
+    out = await svc.get_current_user_info({"id": 1, "is_admin": True, "file_count": 2})
+    assert out["file_quota"] == -1
+    assert out["total_files"] == 3
+
+
+@pytest.mark.asyncio
+async def test_current_user_info_none_quota_falls_back_to_default():
+    svc = _svc(FakeUserRepo(), default_quota=8, job_service=FakeJobService())
+    out = await svc.get_current_user_info({"id": 2, "is_admin": False, "file_count": 0})
+    assert out["file_quota"] == 8
+
+
+@pytest.mark.asyncio
+async def test_current_user_info_negative_default_is_unlimited():
+    svc = _svc(FakeUserRepo(), default_quota=-1, job_service=FakeJobService())
+    out = await svc.get_current_user_info({"id": 2, "is_admin": False, "file_quota": 3, "file_count": 0})
+    assert out["file_quota"] == -1

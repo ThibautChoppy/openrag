@@ -82,5 +82,13 @@ class JobService:
 
         return [{"task_id": tid, "state": i["state"], "details": i["details"]} for tid, i in filtered]
 
+    async def get_user_pending_task_count(self, user_id: int | None) -> int:
+        """Pending (not-yet-completed) indexing tasks for one user.
+
+        Used by UserService for the quota-usage block of ``/users/info``
+        (the legacy router called the actor directly from the handler).
+        """
+        return await self._tsm.get_user_pending_task_count.remote(user_id)
+
 
 __all__ = ["JobService"]

@@ -174,3 +174,50 @@ class TestRepositoriesFactory:
         create_catalog_store(s)
         # The factory uses model_copy with an update — the source must stay None.
         assert s.rdb.database == original_database
+
+
+# Phase 8F — every orchestrator is a lazy cached property on the
+# container and is reachable through a one-liner provider. Keyed by the
+# container property name; value is the matching provider function.
+_ORCHESTRATORS = [
+    ("auth_service", "get_auth_service"),
+    ("user_service", "get_user_service"),
+    ("partition_service", "get_partition_service"),
+    ("workspace_service", "get_workspace_service"),
+    ("retrieval_service", "get_retrieval_service"),
+    ("query_service", "get_query_service"),
+    ("indexing_service", "get_indexing_service"),
+    ("job_service", "get_job_service"),
+    ("conversion_service", "get_conversion_service"),
+]
+
+
+class TestPhase8OrchestratorWiring:
+    """8F: all nine orchestrators wired consistently (container + providers)."""
+
+    @pytest.mark.parametrize("prop,_provider", _ORCHESTRATORS)
+    def test_property_is_lazy_and_cache_slot_starts_none(self, prop, _provider):
+        # The public accessor is a property (lazy), not an eager attribute.
+        assert isinstance(getattr(ServiceContainer, prop), property)
+        # The cache slot exists and is None before first access (no
+        # settings needed — the legacy no-arg path must keep working).
+        assert getattr(ServiceContainer(), f"_{prop}") is None
+
+    @pytest.mark.parametrize("prop,provider", _ORCHESTRATORS)
+    def test_provider_delegates_to_container_property(self, prop, provider):
+        from types import SimpleNamespace
+
+        from di import providers
+
+        sentinel = object()
+        fake_container = SimpleNamespace(**{prop: sentinel})
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(container=fake_container)))
+
+        resolved = getattr(providers, provider)(request)
+        assert resolved is sentinel
+
+    def test_no_orchestrator_is_missing_a_provider(self):
+        from di import providers
+
+        wired = {name for name in vars(providers) if name.startswith("get_") and name.endswith("_service")}
+        assert wired == {p for _, p in _ORCHESTRATORS}

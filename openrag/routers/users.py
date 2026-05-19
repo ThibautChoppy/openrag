@@ -18,10 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from models.user import UserCreate, UserPublic, UserUpdate
 from services.orchestrators.user_service import UserService
-from utils.dependencies import get_task_state_manager
 from utils.logger import get_logger
 
-from .utils import DEFAULT_FILE_QUOTA, current_user, require_admin, require_admin_or_self
+from .utils import current_user, require_admin, require_admin_or_self
 
 logger = get_logger()
 router = APIRouter()
@@ -78,40 +77,12 @@ Returns current user details including:
 )
 async def get_current_user_info(
     user=Depends(current_user),
-    task_state_manager=Depends(get_task_state_manager),
+    service: UserService = Depends(get_user_service),
 ):
     """Get current authenticated user info"""
-
-    user_id = user.get("id")
-    is_admin = user.get("is_admin", False)
-
-    if is_admin:
-        user_quota = float("inf")
-    elif DEFAULT_FILE_QUOTA < 0:
-        user_quota = float("inf")
-    else:
-        user_quota = user.get("file_quota", None)
-        if user_quota is None:
-            user_quota = DEFAULT_FILE_QUOTA
-        elif user_quota < 0:
-            user_quota = float("inf")
-
-    file_count = user.get("file_count", 0)  # Get indexed file count from user info
-    pending_count = await task_state_manager.get_user_pending_task_count.remote(
-        user_id
-    )  # Get pending task count from task manager
-
-    total = file_count + pending_count
-
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={
-            **user,
-            "file_count": file_count,
-            "pending_files": pending_count,
-            "total_files": total,
-            "file_quota": -1 if user_quota == float("inf") else user_quota,
-        },
+        content=await service.get_current_user_info(user),
     )
 
 

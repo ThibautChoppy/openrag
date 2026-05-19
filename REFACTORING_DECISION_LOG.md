@@ -1313,6 +1313,39 @@ settings-supplied vector-store name); `config` dropped.
 - **Flag for Phase 9:** delete `serializer_ray_shim.py`, have
   ConversionService call the serializer stage directly.
 
+**13. 8F keeps the lazy-property container (no eager ordered `__init__`);
+8H closeout pulls the last Ray call out of a thinned router.** The
+plan's 8F snippet builds every orchestrator eagerly in
+`ServiceContainer.__init__` in a hand-ordered block. We did *not* adopt
+that — the lazy cached-property convention set in 8A.1 (decision 1)
+already satisfies "correct instantiation order": dependency resolution
+happens on first access (`user_service` → `auth_service` /
+`partition_service` / `job_service`; `query_service` →
+`retrieval_service` / `workspace_service`), there are no cycles, and the
+Ray shims stay un-touched until first request. 8F is therefore a
+verification pass, not a rewrite: all nine orchestrators are wired
+identically (9 `_x_service` cache slots, 9 properties, 9 providers),
+covered by a new `TestPhase8OrchestratorWiring` in `di/test_container.py`.
+- During the 8H sweep, `routers/users.py` `/users/info` was found still
+  calling `task_state_manager.get_user_pending_task_count` directly (a
+  Ray `.remote` + quota math left in a thinned router by 8A.2). It
+  passed the literal 8H greps (`vectordb` only) but contradicted "routers
+  are thin". Fixed per the plan's "Day 3: fix remaining router rewrites":
+  added `JobService.get_user_pending_task_count`, injected `JobService`
+  into `UserService` (orchestrator-to-orchestrator, same pattern as
+  UserService←PartitionService), moved the quota-usage computation into
+  `UserService.get_current_user_info` (byte-identical response), thinned
+  the handler. UserService stays Ray-free — the count goes through
+  JobService, the one 8H-excepted Ray wrapper.
+- `routers/actors.py` still imports `utils.dependencies` Ray handles —
+  intentionally out of scope: it is the Ray actor/health admin router,
+  not one of the 12 fat routers in the 8G table; it belongs to Phase 9.
+- 8H #7 ("no router > 120 lines") is not literally met (indexer 516,
+  partition 453, …) and is treated as aspirational, consistent with
+  every prior slice: the verbose OpenAPI `description=` docstrings
+  dominate the line count; the business-logic extraction — the actual
+  goal — is complete and grep-verified (#1–#6 clean).
+
 ---
 ## Template for future entries
 
