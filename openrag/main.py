@@ -259,9 +259,9 @@ app.state.app_state = AppState(config)
 
 # Phase 8 composition root. Attached here as minimal wiring so the thinned
 # routers can resolve services via di.providers; Phase 11 moves this into a
-# FastAPI lifespan and calls ``await container.initialize()``. Construction
-# is best-effort: a Milvus/PG hiccup at import must not stop the app from
-# booting (the providers raise 503 if the container is absent).
+# proper FastAPI lifespan. Construction is best-effort: a Milvus/PG hiccup at
+# import must not stop the app from booting (the providers raise 503 if the
+# container is absent).
 try:
     from di.container import ServiceContainer
 
@@ -269,6 +269,39 @@ try:
 except Exception as _container_exc:  # pragma: no cover - defensive boot guard
     logger.warning(f"ServiceContainer wiring skipped: {_container_exc}")
     app.state.container = None
+
+
+@app.on_event("startup")
+async def _initialize_container() -> None:
+    """Open the container's asyncpg pool + run idempotent migrations.
+
+    The thinned Phase-8 routers resolve repositories through the container's
+    own :class:`PostgresStore`, which is a *separate* instance from the one
+    the legacy Ray ``Vectordb`` actor owns. Without this the catalog-backed
+    routes raise (uninitialised pool). The asyncpg layer (Phase 7) is
+    idempotent, so initialising alongside the actor's store is safe. Phase 11
+    folds this into a lifespan; the deferral originally logged in the Phase-8
+    decision log (§1) is corrected here because it broke the live app.
+    """
+    container = getattr(app.state, "container", None)
+    if container is None:
+        return
+    try:
+        await container.initialize()
+    except Exception as exc:  # pragma: no cover - defensive boot guard
+        logger.warning(f"ServiceContainer.initialize skipped: {exc}")
+
+
+@app.on_event("shutdown")
+async def _shutdown_container() -> None:
+    container = getattr(app.state, "container", None)
+    if container is None:
+        return
+    try:
+        await container.shutdown()
+    except Exception as exc:  # pragma: no cover - defensive shutdown guard
+        logger.warning(f"ServiceContainer.shutdown skipped: {exc}")
+
 
 app.mount("/static", StaticFiles(directory=DATA_DIR.resolve(), check_dir=True), name="static")
 

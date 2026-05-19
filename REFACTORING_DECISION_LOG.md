@@ -1346,6 +1346,45 @@ covered by a new `TestPhase8OrchestratorWiring` in `di/test_container.py`.
   dominate the line count; the business-logic extraction — the actual
   goal — is complete and grep-verified (#1–#6 clean).
 
+**14. Phase-8 CI fixes — the §1 "DB-backed flows dormant until Phase 11"
+deferral was wrong and is corrected here.** The unit + API CI jobs were
+red after Phase 8; four root causes, all behaviour-preserving fixes:
+- *Container never initialised (API tests, ~80 failures).* The thinned
+  routers resolve repos through the container's *own* `PostgresStore`,
+  a separate instance from the one the legacy Ray `Vectordb` actor owns
+  and `initialize()`s (`vectordb.py:188`). §1 attached the container but
+  never opened its asyncpg pool, so every catalog-backed route 500'd
+  against an uninitialised pool. Fix: `main.py` startup/shutdown hooks
+  call `container.initialize()/shutdown()` (best-effort, guarded). The
+  asyncpg layer is idempotent (Phase 7), so a second store against the
+  same DB alongside the actor's is safe. This pulls a thin slice of
+  Phase 11 forward — the original deferral broke the live app, which
+  Phase 8 must not. Phase 11 still folds this into a real lifespan.
+- *Auth router 503 instead of 400 in token mode (3 unit failures).*
+  FastAPI resolves `Depends` in declaration order; `Depends(get_auth_service)`
+  ran (and 503'd on the absent container) before the in-body
+  `_require_oidc_mode()` 400 gate. Fix: `_require_oidc_mode` is now a
+  `Depends` declared *before* the service on login/callback/
+  backchannel-logout/logout, so token mode 400s without touching the
+  container. No behaviour change in oidc mode.
+- *`components/utils.py:get_num_tokens` needs an OpenAI key (1 unit
+  failure, latent keyless-deploy defect).* It built `ChatOpenAI(...)`
+  just to count tokens; client construction requires a non-empty
+  api_key (CI mock-vLLM env has none). Fix: fall back to a local
+  tiktoken `cl100k_base` encoder when the client can't be built. Prod
+  (key present) behaviour is unchanged; the count is equivalent for the
+  GPT-3.5/4 family. Also trims LangChain off the QueryService hot path
+  (aligned with the 8H intent).
+- *Stale `routers/test_auth_router.py` (17 collection errors).* The
+  882-line file tested the pre-8A.1 fat router (`routers.auth.OIDCClient`,
+  full OIDC/JWT flow). 8A.1 thinned the router but never updated its
+  companion test — a Phase-8 omission. All that logic moved to
+  `AuthService` and is covered by `services/orchestrators/
+  test_auth_service.py`. Replaced with a lean transport test (stub
+  service via `dependency_overrides`: AUTH_MODE gate, delegation,
+  cookie set/clear, `OIDCFlowError` mapping), matching the phase
+  principle "logic tests move to the service".
+
 ---
 ## Template for future entries
 

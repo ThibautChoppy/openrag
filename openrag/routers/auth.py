@@ -89,9 +89,9 @@ def _json_error(status_code: int, detail: str, *, delete_state_cookie: bool = Fa
 async def login(
     request: Request,
     next: str | None = None,
+    _oidc: None = Depends(_require_oidc_mode),
     service: AuthService = Depends(get_auth_service),
 ):
-    _require_oidc_mode()
     try:
         result = await service.start_oidc_login(next)
     except OIDCFlowError as e:
@@ -120,9 +120,9 @@ async def callback(
     request: Request,
     code: str | None = None,
     state: str | None = None,
+    _oidc: None = Depends(_require_oidc_mode),
     service: AuthService = Depends(get_auth_service),
 ):
-    _require_oidc_mode()
     try:
         result = await service.handle_oidc_callback(
             code=code,
@@ -154,13 +154,13 @@ async def callback(
 @router.post("/auth/backchannel-logout", include_in_schema=False)
 async def backchannel_logout(
     logout_token: str = Form(...),
+    _oidc: None = Depends(_require_oidc_mode),
     service: AuthService = Depends(get_auth_service),
 ):
     """IdP-initiated logout per OIDC Back-Channel Logout spec.
 
     Content-Type: ``application/x-www-form-urlencoded`` with field ``logout_token``.
     """
-    _require_oidc_mode()
     try:
         await service.handle_backchannel_logout(logout_token)
     except OIDCFlowError as e:
@@ -187,9 +187,9 @@ async def backchannel_logout(
 @router.get("/auth/logout", include_in_schema=False)
 async def logout(
     request: Request,
+    _oidc: None = Depends(_require_oidc_mode),
     service: AuthService = Depends(get_auth_service),
 ):
-    _require_oidc_mode()
     redirect_target = await service.logout(request.cookies.get(SESSION_COOKIE_NAME))
 
     if redirect_target:

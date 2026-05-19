@@ -42,8 +42,24 @@ _cached_length_function = None
 def get_num_tokens():
     global _cached_length_function
     if _cached_length_function is None:
-        llm = ChatOpenAI(**config.llm.model_dump())
-        _cached_length_function = llm.get_num_tokens
+        try:
+            llm = ChatOpenAI(**config.llm.model_dump())
+            _cached_length_function = llm.get_num_tokens
+        except Exception as exc:
+            # ChatOpenAI validates an openai client at construction, which
+            # requires a non-empty api_key. Token counting itself is local
+            # (tiktoken) and needs no key or network, so fall back to a
+            # tiktoken encoder when the client cannot be built (keyless
+            # deployments / CI mock-vLLM). cl100k_base matches the
+            # GPT-3.5/4 family OpenRAG targets; counts are equivalent.
+            import tiktoken
+
+            logger.warning(
+                "ChatOpenAI unavailable for token counting, falling back to tiktoken cl100k_base",
+                error=str(exc),
+            )
+            _encoding = tiktoken.get_encoding("cl100k_base")
+            _cached_length_function = lambda text: len(_encoding.encode(text))  # noqa: E731
     return _cached_length_function
 
 
