@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from services.orchestrators.auth_service import AuthService
     from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.user_service import UserService
+    from services.orchestrators.workspace_service import WorkspaceService
 
 
 def get_container(request: Request) -> ServiceContainer:
@@ -42,3 +43,7 @@ def get_user_service(request: Request) -> UserService:
 
 def get_partition_service(request: Request) -> PartitionService:
     return get_container(request).partition_service
+
+
+def get_workspace_service(request: Request) -> WorkspaceService:
+    return get_container(request).workspace_service

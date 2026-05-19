@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from services.orchestrators.auth_service import AuthService
     from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.user_service import UserService
+    from services.orchestrators.workspace_service import WorkspaceService
 
 
 _NO_SETTINGS_MESSAGE = (
@@ -103,6 +104,7 @@ class ServiceContainer:
         self._auth_service: AuthService | None = None
         self._user_service: UserService | None = None
         self._partition_service: PartitionService | None = None
+        self._workspace_service: WorkspaceService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -271,6 +273,20 @@ class ServiceContainer:
                 collection=self._settings.vectordb.collection_name,
             )
         return self._partition_service
+
+    @property
+    def workspace_service(self) -> WorkspaceService:
+        """WorkspaceService — lazily built, cached for the container's lifetime."""
+        if self._workspace_service is None:
+            from services.orchestrators.workspace_service import WorkspaceService
+
+            self._workspace_service = WorkspaceService(
+                workspace_repo=self.workspace_repo,
+                document_repo=self.document_repo,
+                vector_store=self.vector_store,
+                collection=self._settings.vectordb.collection_name,
+            )
+        return self._workspace_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)
