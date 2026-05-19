@@ -67,14 +67,22 @@ class CommonSearchParams:
 
 
 def _documents(request: Request, chunks) -> list[dict]:
-    return [
-        {
-            "link": str(request.url_for("get_extract", extract_id=c.metadata.get("_id") or c.id)),
-            "metadata": c.metadata,
-            "content": c.text,
-        }
-        for c in chunks
-    ]
+    docs: list[dict] = []
+    for c in chunks:
+        # Restore the legacy response metadata shape. Chunk.from_langchain
+        # lifts file_id / partition / page / _id out of the free-form
+        # metadata into typed Chunk fields; to_langchain merges them back so
+        # the API contract (metadata.file_id, _id, …) matches the
+        # pre-Phase-8 router that returned the raw Document metadata.
+        meta = c.to_langchain().metadata
+        docs.append(
+            {
+                "link": str(request.url_for("get_extract", extract_id=meta.get("_id") or c.id)),
+                "metadata": meta,
+                "content": c.text,
+            }
+        )
+    return docs
 
 
 @router.get(
