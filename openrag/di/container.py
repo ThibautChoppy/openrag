@@ -55,6 +55,8 @@ if TYPE_CHECKING:
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.indexing_service import IndexingService
+    from services.orchestrators.job_service import JobService
     from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.query_service import QueryService
     from services.orchestrators.retrieval_service import RetrievalService
@@ -109,6 +111,8 @@ class ServiceContainer:
         self._workspace_service: WorkspaceService | None = None
         self._retrieval_service: RetrievalService | None = None
         self._query_service: QueryService | None = None
+        self._indexing_service: IndexingService | None = None
+        self._job_service: JobService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -360,6 +364,41 @@ class ServiceContainer:
                 workspace_service=self.workspace_service,
             )
         return self._query_service
+
+    @property
+    def indexing_service(self) -> IndexingService:
+        """IndexingService — lazily built, cached for the container's lifetime.
+
+        The dispatcher is the Ray-backed ``IndexerRayShim`` during the
+        Phase-8 shim period (Ray cleanup is Phase 9); it is resolved
+        lazily so the ``Indexer`` / ``TaskStateManager`` actors only need
+        to exist at first request, not at container construction.
+        """
+        if self._indexing_service is None:
+            from services.orchestrators.indexing_service import IndexingService
+            from services.storage.indexer_ray_shim import from_ray_namespace
+
+            self._indexing_service = IndexingService(
+                document_repo=self.document_repo,
+                workspace_repo=self.workspace_repo,
+                dispatcher=from_ray_namespace(),
+            )
+        return self._indexing_service
+
+    @property
+    def job_service(self) -> JobService:
+        """JobService — lazily built, cached for the container's lifetime.
+
+        Wraps the ``TaskStateManager`` Ray actor directly (8H excepts
+        JobService); resolved lazily so the actor only needs to exist at
+        first request.
+        """
+        if self._job_service is None:
+            from services.orchestrators.job_service import JobService
+            from utils.dependencies import get_task_state_manager
+
+            self._job_service = JobService(task_state_manager=get_task_state_manager())
+        return self._job_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

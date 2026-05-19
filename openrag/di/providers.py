@@ -18,6 +18,8 @@ from fastapi import HTTPException, Request, status
 if TYPE_CHECKING:
     from di.container import ServiceContainer
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.indexing_service import IndexingService
+    from services.orchestrators.job_service import JobService
     from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.query_service import QueryService
     from services.orchestrators.retrieval_service import RetrievalService
@@ -57,3 +59,11 @@ def get_retrieval_service(request: Request) -> RetrievalService:
 
 def get_query_service(request: Request) -> QueryService:
     return get_container(request).query_service
+
+
+def get_indexing_service(request: Request) -> IndexingService:
+    return get_container(request).indexing_service
+
+
+def get_job_service(request: Request) -> JobService:
+    return get_container(request).job_service

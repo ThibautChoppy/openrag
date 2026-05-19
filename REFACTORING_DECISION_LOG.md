@@ -1233,6 +1233,42 @@ citation-filtered `extra`. The router maps partition, wraps
   now dead code (no router imports `RagPipeline`); **flag for Phase 12
   cleanup** to delete them with the other shims.
 
+**9. 8D.1 indexing dispatch sits behind an `IndexingDispatcher` port +
+Ray shim, not direct Ray calls in the service.** The plan's
+`IndexingService.__init__(document_repo, workspace_repo, vector_store,
+config)` can't reach the `Indexer` / `TaskStateManager` actors. Mirroring
+the proven 8C searcher pattern, a new `core/indexing/dispatcher.py` ABC
+defines the worker operations the service needs and
+`services/storage/indexer_ray_shim.py` adapts the two Ray actors to it;
+the container injects it via `from_ray_namespace()` (lazy, like
+RetrievalService). `vector_store` and `config` are dropped from the ctor
+(the file delete is owned by the Indexer worker; the only config the
+legacy router used — data dir, vectordb timeout — is a transport/shim
+concern); `dispatcher` is the added arg.
+- Why: 8H bans Ray remote calls under `services/orchestrators/` (only
+  JobService is excepted); the established way to keep an orchestrator
+  Ray-free during the shim is a core port + `services/storage/` shim.
+- Alternative: leave the dispatch in the thin router. Rejected — 8G/8D.1
+  explicitly move "inline upload+dispatch → indexing_service.add_file()".
+- File save to disk + the byte-identical `HTTPException` guards (409
+  exists, 404 not-found, 400 bad workspace_ids, 404 unknown workspace,
+  404 no object ref) stay in the router (transport + exact legacy body),
+  matching the workspaces.py thinning style.
+- **Flag for Phase 9:** delete `indexer_ray_shim.py`, have IndexingService
+  call the pipeline stages directly.
+
+**10. 8D.2 JobService keeps Ray `.remote` calls (the one 8H exception).**
+Per the plan ctor `JobService(task_state_manager)` and the 8H carve-out,
+JobService wraps the `TaskStateManager` actor directly — no shim. The
+status rollup and `?task_status=` filtering (business logic) move into
+the service; `request.url_for` link building stays in the thin queue
+router. Container resolves the actor lazily in the cached property
+(deferred `utils.dependencies` import) so it is only needed at first
+request.
+- Why: introducing a shim here would contradict the plan and the
+  explicit 8H exception; JobService is the documented hook point for the
+  post-refactor DB-backed job tracking (Phase 9).
+
 ---
 ## Template for future entries
 

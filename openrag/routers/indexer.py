@@ -1,11 +1,23 @@
+"""Indexing routes — thin HTTP layer over :class:`IndexingService`.
+
+Phase 8D.1: metadata assembly, existence/workspace checks and task
+dispatch moved to
+``services.orchestrators.indexing_service.IndexingService`` (the Ray
+``Indexer`` / ``TaskStateManager`` actors now sit behind the
+``IndexingDispatcher`` port). This module keeps HTTP transport only:
+the saved-file IO, ``request.url_for`` link building, the shared
+``Depends`` auth wrappers, and the conflict / not-found / bad-input
+guards whose exact non-bracketed ``{"detail": ...}`` body the legacy
+endpoints returned via ``HTTPException``.
+"""
+
 import json
 from pathlib import Path
 from typing import Any
 
-import ray
-from components.indexer.utils.files import extract_temporal_fields, sanitize_filename, save_file_to_disk
-from components.ray_utils import call_ray_actor_with_timeout
+from components.indexer.utils.files import sanitize_filename, save_file_to_disk
 from config import load_config
+from di.providers import get_indexing_service
 from fastapi import (
     APIRouter,
     Depends,
@@ -17,14 +29,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from utils.dependencies import get_indexer, get_task_state_manager, get_vectordb
+from services.orchestrators.indexing_service import IndexingService
 from utils.logger import get_logger
 
 from .utils import (
     check_user_file_quota,
     current_user_partitions,
     ensure_partition_role,
-    human_readable_size,
     require_partition_editor,
     require_task_owner,
     validate_file_format,
@@ -32,26 +43,17 @@ from .utils import (
     validate_metadata,
 )
 
-# load logger
 logger = get_logger()
 
-# load config
 config = load_config()
 DATA_DIR = config.paths.data_dir
-VECTORDB_TIMEOUT = config.ray.indexer.vectordb_timeout
-
-FORBIDDEN_CHARS_IN_FILE_ID = set("/")  # set('"<>#%{}|\\^`[]')
 LOG_FILE = Path(config.paths.log_dir or "logs") / "app.json"
 
 # supported file formats or mimetypes
 ACCEPTED_FILE_FORMATS = config.loader.file_loaders.model_dump().keys()
 DICT_MIMETYPES = config.loader.mimetypes.to_dict()
 
-# URL scheme configuration
 PREFERRED_URL_SCHEME = config.server.preferred_url_scheme
-
-# DATETIME FIELDS: Fields provided by the client
-TEMPORAL_FIELDS = ["created_at"]
 
 
 def build_url(request: Request, route_name: str, **path_params) -> str:
@@ -62,7 +64,6 @@ def build_url(request: Request, route_name: str, **path_params) -> str:
     return str(url)
 
 
-# Create an APIRouter instance
 router = APIRouter()
 
 
@@ -83,9 +84,7 @@ async def get_supported_types():
         - `extensions`: List of supported file extensions.
         - `mimetypes`: List of supported MIME types.
     """
-    list_extensions = list(ACCEPTED_FILE_FORMATS)
-    list_mimetypes = list(DICT_MIMETYPES)
-    resp = {"extensions": list_extensions, "mimetypes": list_mimetypes}
+    resp = {"extensions": list(ACCEPTED_FILE_FORMATS), "mimetypes": list(DICT_MIMETYPES)}
     return JSONResponse(content=resp)
 
 
@@ -129,23 +128,20 @@ async def add_file(
     file: UploadFile = Depends(validate_file_format),
     metadata: dict = Depends(validate_metadata),
     workspace_ids: str | None = Form(None, description="JSON array of workspace IDs to add the file to"),
-    indexer=Depends(get_indexer),
-    task_state_manager=Depends(get_task_state_manager),
-    vectordb=Depends(get_vectordb),
     user=Depends(require_partition_editor),
     _quota_check=Depends(check_user_file_quota),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    if await vectordb.file_exists.remote(file_id, partition):
+    if await service.file_exists(file_id, partition):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"File '{file_id}' already exists in partition {partition}",
         )
 
-    save_dir = Path(DATA_DIR)
     original_filename = file.filename
     file.filename = sanitize_filename(file.filename)
     try:
-        file_path = await save_file_to_disk(file, save_dir, with_random_prefix=True)
+        file_path = await save_file_to_disk(file, Path(DATA_DIR), with_random_prefix=True)
     except Exception as e:
         logger.exception("Failed to save file to disk.", error=str(e))
         raise HTTPException(
@@ -153,24 +149,6 @@ async def add_file(
             detail=str(e),
         )
 
-    metadata.update(
-        {
-            "source": str(file_path),
-            "filename": file.filename,
-            "original_filename": original_filename,
-        }
-    )
-    file_stat = Path(file_path).stat()
-
-    # Append extra metadata
-    metadata["file_size"] = human_readable_size(file_stat.st_size)
-    metadata["file_id"] = file_id
-
-    ## Add temporal fields to metadata, using provided values if available, otherwise extracting from file system
-    temporal_fields = extract_temporal_fields(metadata, temporal_fields=TEMPORAL_FIELDS)
-    metadata.update(temporal_fields)
-
-    # Validate and parse workspace_ids
     parsed_workspace_ids = None
     if workspace_ids:
         try:
@@ -183,27 +161,27 @@ async def add_file(
                 detail="workspace_ids must be a JSON array of strings",
             )
         for ws_id in parsed_workspace_ids:
-            ws = await call_ray_actor_with_timeout(
-                vectordb.get_workspace.remote(ws_id),
-                timeout=VECTORDB_TIMEOUT,
-                task_description=f"get_workspace({ws_id})",
-            )
+            ws = await service.get_workspace(ws_id)
             if not ws or ws["partition_name"] != partition:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Workspace '{ws_id}' not found in partition '{partition}'",
                 )
 
-    # Indexing the file (workspace association happens inside add_file after successful indexing)
-    task = indexer.add_file.remote(
-        path=file_path, metadata=metadata, partition=partition, user=user, workspace_ids=parsed_workspace_ids
+    task_id = await service.add_file(
+        file_path=str(file_path),
+        file_id=file_id,
+        partition=partition,
+        metadata=metadata,
+        sanitized_filename=file.filename,
+        original_filename=original_filename,
+        user=user,
+        workspace_ids=parsed_workspace_ids,
     )
-    await task_state_manager.set_state.remote(task.task_id().hex(), "QUEUED")
-    await task_state_manager.set_object_ref.remote(task.task_id().hex(), {"ref": task})
 
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
-        content={"task_status_url": build_url(request, "get_task_status", task_id=task.task_id().hex())},
+        content={"task_status_url": build_url(request, "get_task_status", task_id=task_id)},
     )
 
 
@@ -222,16 +200,15 @@ Returns 204 No Content on successful deletion.
 async def delete_file(
     partition: str,
     file_id: str,
-    indexer=Depends(get_indexer),
-    vectordb=Depends(get_vectordb),
     user=Depends(require_partition_editor),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    if not await vectordb.file_exists.remote(file_id, partition):
+    if not await service.file_exists(file_id, partition):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{file_id}' not found in partition '{partition}'",
         )
-    await indexer.delete_file.remote(file_id, partition)
+    await service.delete_file(file_id, partition)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -275,12 +252,10 @@ async def put_file(
     file_id: str = Depends(validate_file_id),
     file: UploadFile = Depends(validate_file_format),
     metadata: dict = Depends(validate_metadata),
-    indexer=Depends(get_indexer),
-    task_state_manager=Depends(get_task_state_manager),
-    vectordb=Depends(get_vectordb),
     user=Depends(require_partition_editor),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    if not await vectordb.file_exists.remote(file_id, partition):
+    if not await service.file_exists(file_id, partition):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{file_id}' not found in partition '{partition}'",
@@ -289,45 +264,24 @@ async def put_file(
     # No Milvus deletion here. The Indexer's add_file(replace=True) flow uses
     # insert-before-delete: it snapshots old chunk IDs, inserts new chunks,
     # then deletes old ones — so the file is never left in a half-replaced state.
-
-    save_dir = Path(DATA_DIR)
     original_filename = file.filename
     file.filename = sanitize_filename(file.filename)
-    file_path = await save_file_to_disk(file, save_dir, with_random_prefix=True)
+    file_path = await save_file_to_disk(file, Path(DATA_DIR), with_random_prefix=True)
 
-    metadata.update(
-        {
-            "source": str(file_path),
-            "filename": file.filename,
-            "original_filename": original_filename,
-        }
-    )
-
-    file_stat = Path(file_path).stat()
-
-    # Append extra metadata
-    metadata["file_size"] = human_readable_size(file_stat.st_size)
-    metadata["file_id"] = file_id
-
-    ## Add temporal fields to metadata, using provided values if available, otherwise extracting from file system
-    temporal_fields = extract_temporal_fields(metadata, temporal_fields=TEMPORAL_FIELDS)
-    metadata.update(temporal_fields)
-
-    # Re-index: serialize → chunk → embed → insert into Milvus + update PG row in-place.
-    # replace=True tells add_file to update the existing PG File row rather than creating a new one.
-    task = indexer.add_file.remote(
-        path=file_path,
-        metadata=metadata,
+    task_id = await service.add_file(
+        file_path=str(file_path),
+        file_id=file_id,
         partition=partition,
+        metadata=metadata,
+        sanitized_filename=file.filename,
+        original_filename=original_filename,
         user=user,
         replace=True,
     )
-    await task_state_manager.set_state.remote(task.task_id().hex(), "QUEUED")
-    await task_state_manager.set_object_ref.remote(task.task_id().hex(), {"ref": task})
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        content={"task_status_url": build_url(request, "get_task_status", task_id=task.task_id().hex())},
+        content={"task_status_url": build_url(request, "get_task_status", task_id=task_id)},
     )
 
 
@@ -353,12 +307,10 @@ async def patch_file(
     partition: str,
     file_id: str = Depends(validate_file_id),
     metadata: Any | None = Depends(validate_metadata),
-    indexer=Depends(get_indexer),
     user=Depends(require_partition_editor),
     user_partitions=Depends(current_user_partitions),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    metadata["file_id"] = file_id
-
     # Make sure partition role is valid if partition is being changed
     if "partition" in metadata:
         await ensure_partition_role(
@@ -368,7 +320,7 @@ async def patch_file(
             required_role="editor",
         )
 
-    await indexer.update_file_metadata.remote(file_id, metadata, partition, user=user)
+    await service.update_metadata(file_id, metadata, partition, user)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={"message": f"Metadata for file '{file_id}' successfully updated."},
@@ -400,22 +352,27 @@ async def copy_file_between_partitions(
     metadata: Any | None = Depends(validate_metadata),
     source_partition: str = Form(...),
     source_file_id: str = Form(...),
-    indexer=Depends(get_indexer),
     user=Depends(require_partition_editor),
     user_partitions=Depends(current_user_partitions),
     _quota_check=Depends(check_user_file_quota),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    # Make sure user has access to destination partition
+    # Make sure user has access to the source partition
     await ensure_partition_role(
         partition=source_partition,
         user=user,
         user_partitions=user_partitions,
         required_role="viewer",
     )
-    metadata["file_id"] = file_id
-    metadata["partition"] = partition
 
-    await indexer.copy_file.remote(file_id=source_file_id, metadata=metadata, partition=source_partition, user=user)
+    await service.copy_file(
+        source_file_id=source_file_id,
+        source_partition=source_partition,
+        target_file_id=file_id,
+        target_partition=partition,
+        metadata=metadata,
+        user=user,
+    )
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={"message": "File copied successfully."},
@@ -440,18 +397,16 @@ Returns task status information including:
 async def get_task_status(
     request: Request,
     task_id: str,
-    task_state_manager=Depends(get_task_state_manager),
     task_details=Depends(require_task_owner),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    # fetch task state
-    state = await task_state_manager.get_state.remote(task_id)
+    state = await service.get_task_state(task_id)
     if state is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{task_id}' not found.",
         )
 
-    # format the response
     content: dict[str, Any] = {
         "task_id": task_id,
         "task_state": state,
@@ -481,10 +436,10 @@ Returns error information including:
 )
 async def get_task_error(
     task_id: str,
-    task_state_manager=Depends(get_task_state_manager),
     task_details=Depends(require_task_owner),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    error = await task_state_manager.get_error.remote(task_id)
+    error = await service.get_task_error(task_id)
     if error is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -552,15 +507,10 @@ Returns confirmation message that cancellation signal was sent.
 )
 async def cancel_task(
     task_id: str,
-    task_state_manager=Depends(get_task_state_manager),
     task_details=Depends(require_task_owner),
+    service: IndexingService = Depends(get_indexing_service),
 ):
-    obj_ref = await task_state_manager.get_object_ref.remote(task_id)
-    if obj_ref is None:
+    cancelled = await service.cancel_task(task_id)
+    if not cancelled:
         raise HTTPException(404, f"No ObjectRef stored for task {task_id}")
-
-    ray.cancel(obj_ref["ref"], recursive=True)
-    current_state = await task_state_manager.get_state.remote(task_id)
-    if current_state not in {"COMPLETED", "FAILED"}:
-        await task_state_manager.set_state.remote(task_id, "CANCELLED")
     return {"message": f"Cancellation signal sent for task {task_id}"}

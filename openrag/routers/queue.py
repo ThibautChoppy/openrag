@@ -1,28 +1,19 @@
-from collections import Counter
+"""Queue routes — thin HTTP layer over :class:`JobService`.
 
-from config import load_config
+Phase 8D.2: queue aggregation and the ``?task_status=`` filtering moved
+to ``services.orchestrators.job_service.JobService``. This module keeps
+HTTP transport only: the shared admin/current-user ``Depends`` wrappers
+and the ``request.url_for`` link building.
+"""
+
+from di.providers import get_job_service
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
-from utils.dependencies import get_task_state_manager
+from services.orchestrators.job_service import JobService
 
 from .utils import current_user, require_admin
 
-# load config
-config = load_config()
-
-# Create an APIRouter instance
 router = APIRouter()
-
-
-def _format_pool_info(worker_info: dict[str, int]) -> dict[str, int]:
-    """
-    Convert SerializerQueue.pool_info() output into a concise dict for the API.
-    """
-    return {
-        "total_slots": worker_info["total_capacity"],
-        "pool_size": worker_info["pool_size"],
-        "max_per_actor": worker_info["max_tasks_per_worker"],
-    }
 
 
 @router.get(
@@ -51,25 +42,11 @@ Returns system status including:
 Monitor system load and worker utilization.
 """,
 )
-async def get_queue_info(admin=Depends(require_admin), task_state_manager=Depends(get_task_state_manager)):
-    all_states: dict = await task_state_manager.get_all_states.remote()
-    status_counts = Counter(all_states.values())
-
-    active_statuses = ["QUEUED", "SERIALIZING", "CHUNKING", "INSERTING"]
-    active = {s: status_counts.get(s, 0) for s in active_statuses}
-
-    task_summary = {
-        "active": sum(active.values()),
-        "active_statuses": active,
-        "total_cancelled": status_counts.get("CANCELLED", 0),
-        "total_completed": status_counts.get("COMPLETED", 0),
-        "total_failed": status_counts.get("FAILED", 0),
-    }
-
-    worker_info = await task_state_manager.get_pool_info.remote()
-    workers_block = _format_pool_info(worker_info)
-
-    return {"workers": workers_block, "tasks": task_summary}
+async def get_queue_info(
+    admin=Depends(require_admin),
+    service: JobService = Depends(get_job_service),
+):
+    return await service.get_queue_info()
 
 
 @router.get(
@@ -111,40 +88,30 @@ Returns list of tasks with:
 async def list_tasks(
     request: Request,
     task_status: str | None = None,
-    task_state_manager=Depends(get_task_state_manager),
     user=Depends(current_user),
+    service: JobService = Depends(get_job_service),
 ):
     """
     - ?task_status=active  → QUEUED | SERIALIZING | CHUNKING | INSERTING
     - ?task_status=<exact> → exact match (case-insensitive)
     - (none)               → all tasks
     """
-    # fetch task info
-    if user.get("is_admin"):
-        all_info: dict[str, dict] = await task_state_manager.get_all_info.remote()
-    else:
-        all_info: dict[str, dict] = await task_state_manager.get_all_user_info.remote(user.get("id"))
+    rows = await service.list_tasks(
+        is_admin=bool(user.get("is_admin")),
+        user_id=user.get("id"),
+        task_status=task_status,
+    )
 
-    if task_status is None:
-        filtered = all_info.items()
-    else:
-        if task_status.lower() == "active":
-            active_states = {"QUEUED", "SERIALIZING", "CHUNKING", "INSERTING"}
-            filtered = [(tid, info) for tid, info in all_info.items() if info["state"] in active_states]
-        else:
-            filtered = [(tid, info) for tid, info in all_info.items() if info["state"].lower() == task_status.lower()]
-
-    # format the response
     tasks = []
-    for task_id, info in filtered:
+    for row in rows:
+        task_id = row["task_id"]
         item = {
             "task_id": task_id,
-            "state": info["state"],
-            "details": info["details"],
-            # include an error URL if applicable
+            "state": row["state"],
+            "details": row["details"],
             **(
                 {"error_url": str(request.url_for("get_task_error", task_id=task_id))}
-                if info["state"] == "FAILED"
+                if row["state"] == "FAILED"
                 else {}
             ),
             "url": str(request.url_for("get_task_status", task_id=task_id)),
