@@ -297,6 +297,7 @@ def _install_dependencies_stub():
         return logger
 
     logger_stub = types.ModuleType("utils.logger")
+    logger_stub.escape_markup = lambda s: s.replace("\\", "\\\\").replace("<", "\\<").replace(">", "\\>")
     logger_stub.get_logger = _logger
     sys.modules["utils.logger"] = logger_stub
 
