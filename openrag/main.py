@@ -266,8 +266,12 @@ try:
     from di.container import ServiceContainer
 
     app.state.container = ServiceContainer(config)
-except Exception as _container_exc:  # pragma: no cover - defensive boot guard
-    logger.warning(f"ServiceContainer wiring skipped: {_container_exc}")
+except Exception:  # pragma: no cover - defensive boot guard
+    # Best-effort by design (a Milvus/PG hiccup must not block boot, and
+    # di/providers.py serves a 503 while the container is absent), but log
+    # at exception level with a full traceback so an unexpected failure
+    # (import/syntax/misconfig) is loud rather than a one-line warning.
+    logger.exception("ServiceContainer wiring skipped")
     app.state.container = None
 
 
@@ -288,8 +292,8 @@ async def _initialize_container() -> None:
         return
     try:
         await container.initialize()
-    except Exception as exc:  # pragma: no cover - defensive boot guard
-        logger.warning(f"ServiceContainer.initialize skipped: {exc}")
+    except Exception:  # pragma: no cover - defensive boot guard
+        logger.exception("ServiceContainer.initialize skipped")
 
 
 @app.on_event("shutdown")
@@ -299,8 +303,8 @@ async def _shutdown_container() -> None:
         return
     try:
         await container.shutdown()
-    except Exception as exc:  # pragma: no cover - defensive shutdown guard
-        logger.warning(f"ServiceContainer.shutdown skipped: {exc}")
+    except Exception:  # pragma: no cover - defensive shutdown guard
+        logger.exception("ServiceContainer.shutdown skipped")
 
 
 app.mount("/static", StaticFiles(directory=DATA_DIR.resolve(), check_dir=True), name="static")

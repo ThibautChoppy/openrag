@@ -62,7 +62,13 @@ async def get_extract(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Extract '{extract_id}' not found.",
         )
-    chunk_partition = chunk["metadata"]["partition"]
+    chunk_partition = chunk.get("metadata", {}).get("partition")
+    if not chunk_partition:
+        log.warning("Extract metadata missing partition.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Extract '{extract_id}' not found.",
+        )
     log.info(f"User partitions: {user_partitions}, Chunk partition: {chunk_partition}")
     if chunk_partition not in user_partitions and user_partitions != ["all"]:
         log.warning("User does not have access to this extract.")

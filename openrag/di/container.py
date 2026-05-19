@@ -116,6 +116,18 @@ class ServiceContainer:
         self._job_service: JobService | None = None
         self._conversion_service: ConversionService | None = None
 
+    def _require_settings(self) -> Settings:
+        """Settings guard for the settings-dependent service properties.
+
+        Without this, ``ServiceContainer()`` (no-settings legacy path)
+        fails with a bare ``AttributeError`` on ``self._settings.x`` —
+        inconsistent with the ``catalog_store`` / ``vector_store``
+        contract, which raises ``RuntimeError(_NO_SETTINGS_MESSAGE)``.
+        """
+        if self._settings is None:
+            raise RuntimeError(_NO_SETTINGS_MESSAGE)
+        return self._settings
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -259,10 +271,11 @@ class ServiceContainer:
         if self._user_service is None:
             from services.orchestrators.user_service import UserService
 
+            settings = self._require_settings()
             self._user_service = UserService(
                 user_repo=self.user_repo,
                 auth_service=self.auth_service,
-                default_file_quota=self._settings.rdb.default_file_quota,
+                default_file_quota=settings.rdb.default_file_quota,
                 partition_service=self.partition_service,
                 membership_repo=self.membership_repo,
                 job_service=self.job_service,
@@ -275,13 +288,14 @@ class ServiceContainer:
         if self._partition_service is None:
             from services.orchestrators.partition_service import PartitionService
 
+            settings = self._require_settings()
             self._partition_service = PartitionService(
                 partition_repo=self.partition_repo,
                 membership_repo=self.membership_repo,
                 document_repo=self.document_repo,
                 vector_store=self.vector_store,
                 user_repo=self.user_repo,
-                collection=self._settings.vectordb.collection_name,
+                collection=settings.vectordb.collection_name,
             )
         return self._partition_service
 
@@ -291,11 +305,12 @@ class ServiceContainer:
         if self._workspace_service is None:
             from services.orchestrators.workspace_service import WorkspaceService
 
+            settings = self._require_settings()
             self._workspace_service = WorkspaceService(
                 workspace_repo=self.workspace_repo,
                 document_repo=self.document_repo,
                 vector_store=self.vector_store,
-                collection=self._settings.vectordb.collection_name,
+                collection=settings.vectordb.collection_name,
             )
         return self._workspace_service
 
@@ -312,7 +327,8 @@ class ServiceContainer:
             from services.orchestrators.retrieval_service import RetrievalService
             from services.storage.milvus_ray_shim import from_ray_namespace
 
-            llm_cfg = self._settings.llm.model_dump()
+            settings = self._require_settings()
+            llm_cfg = settings.llm.model_dump()
             llm = self.create_llm(
                 "vllm",
                 endpoint=llm_cfg["base_url"],
@@ -321,7 +337,7 @@ class ServiceContainer:
                 **{k: v for k, v in llm_cfg.items() if k not in ("base_url", "model", "api_key")},
             )
             reranker = None
-            rcfg = self._settings.reranker
+            rcfg = settings.reranker
             if rcfg.enabled:
                 reranker = self.create_reranker(
                     rcfg.provider,
@@ -334,7 +350,7 @@ class ServiceContainer:
                 searcher=from_ray_namespace(),
                 reranker=reranker,
                 llm=llm,
-                config=self._settings,
+                config=settings,
             )
         return self._retrieval_service
 
@@ -351,7 +367,8 @@ class ServiceContainer:
             from components.websearch import WebSearchFactory
             from services.orchestrators.query_service import QueryService
 
-            llm_cfg = self._settings.llm.model_dump()
+            settings = self._require_settings()
+            llm_cfg = settings.llm.model_dump()
             llm = self.create_llm(
                 "vllm",
                 endpoint=llm_cfg["base_url"],
@@ -362,8 +379,8 @@ class ServiceContainer:
             self._query_service = QueryService(
                 retrieval_service=self.retrieval_service,
                 llm=llm,
-                config=self._settings,
-                web_search_service=WebSearchFactory.create_service(self._settings),
+                config=settings,
+                web_search_service=WebSearchFactory.create_service(settings),
                 workspace_service=self.workspace_service,
             )
         return self._query_service
@@ -415,10 +432,11 @@ class ServiceContainer:
             from services.orchestrators.conversion_service import ConversionService
             from services.storage.serializer_ray_shim import from_ray_namespace
 
+            settings = self._require_settings()
             self._conversion_service = ConversionService(
                 serializer=from_ray_namespace(),
                 vector_store=self.vector_store,
-                collection=self._settings.vectordb.collection_name,
+                collection=settings.vectordb.collection_name,
             )
         return self._conversion_service
 

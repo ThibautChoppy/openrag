@@ -366,6 +366,11 @@ class AuthService:
             )
 
         user_role = membership.get("role")
+        if user_role not in cls.ROLE_HIERARCHY:
+            raise AuthError(
+                f"Access to partition '{partition}' forbidden",
+                status_code=403,
+            )
         if cls.ROLE_HIERARCHY[user_role] < cls.ROLE_HIERARCHY[required_role]:
             raise AuthError(
                 f"{required_role.capitalize()} role required for partition '{partition}'",
