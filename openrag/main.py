@@ -293,7 +293,11 @@ async def _initialize_container() -> None:
     try:
         await container.initialize()
     except Exception:  # pragma: no cover - defensive boot guard
-        logger.exception("ServiceContainer.initialize skipped")
+        # A half-initialised container (e.g. asyncpg pool never opened)
+        # would route requests into broken repos and 500. Drop it so
+        # di/providers.py serves the intended degraded 503 instead.
+        logger.exception("ServiceContainer.initialize failed; serving degraded (503)")
+        app.state.container = None
 
 
 @app.on_event("shutdown")
