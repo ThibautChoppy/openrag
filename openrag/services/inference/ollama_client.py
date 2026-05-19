@@ -112,9 +112,7 @@ class OllamaClient(LLM):
         payload = {**self._defaults, **kwargs, "model": self._model, "messages": messages, "stream": True}
         payload.pop("metadata", None)
         try:
-            async with self._client.stream(
-                "POST", f"{self._endpoint}/chat/completions", json=payload
-            ) as resp:
+            async with self._client.stream("POST", f"{self._endpoint}/chat/completions", json=payload) as resp:
                 if resp.status_code >= 400:
                     await resp.aread()
                     raise InferenceError(

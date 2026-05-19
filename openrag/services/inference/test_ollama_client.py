@@ -160,9 +160,7 @@ class TestOllamaClient:
             assert "metadata" not in body
             return _chat_response()
 
-        await self._make_client(handler).chat(
-            [{"role": "user", "content": "hi"}], metadata={"llm_override": {}}
-        )
+        await self._make_client(handler).chat([{"role": "user", "content": "hi"}], metadata={"llm_override": {}})
 
     @pytest.mark.asyncio
     async def test_metadata_default_stripped_from_generate_payload(self):
@@ -180,9 +178,7 @@ class TestOllamaClient:
             assert "metadata" not in body
             return _chat_response()
 
-        await self._make_client(handler, metadata={"llm_override": {}}).chat(
-            [{"role": "user", "content": "hi"}]
-        )
+        await self._make_client(handler, metadata={"llm_override": {}}).chat([{"role": "user", "content": "hi"}])
 
     @pytest.mark.asyncio
     async def test_metadata_default_stripped_from_stream_payload(self):

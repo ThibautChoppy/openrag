@@ -20,4 +20,5 @@ def reset_oidc_client() -> None:
     _client = None
     _service_reset_oidc_client()
 
+
 __all__ = ["get_oidc_client", "reset_oidc_client"]
