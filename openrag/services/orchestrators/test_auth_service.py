@@ -1,0 +1,385 @@
+"""Unit tests for :class:`AuthService` (Phase 8A.1).
+
+The OIDC primitives (PKCE/state generation, state-cookie signing, Fernet
+token encryption, opaque session-token issuance) are exercised for real;
+only the IdP-facing :class:`OIDCClient` and the persistence repos are
+faked. Each test asserts behaviour the legacy router used to own.
+"""
+
+from __future__ import annotations
+
+import pytest
+from components.auth import StateCookieSerializer, hash_session_token
+from components.auth.oidc_client import LogoutTokenClaims, TokenBundle
+from core.config.auth import OIDCConfig
+from core.models.user import User
+from cryptography.fernet import Fernet
+from services.orchestrators.auth_service import AuthService, OIDCFlowError
+
+KEY = Fernet.generate_key().decode()
+
+
+# --------------------------------------------------------------------------- #
+# Fakes
+# --------------------------------------------------------------------------- #
+
+
+class FakeUserRepo:
+    def __init__(self, users: dict[str, User] | None = None):
+        self._by_ext = users or {}
+        self.created: list[User] = []
+        self.updated: list[tuple[int, dict]] = []
+        self._next_id = 100
+
+    async def get_user_by_external_id(self, external_id: str) -> User | None:
+        return self._by_ext.get(external_id)
+
+    async def create_user(self, user: User) -> User:
+        self._next_id += 1
+        user.id = self._next_id
+        self.created.append(user)
+        if user.external_user_id:
+            self._by_ext[user.external_user_id] = user
+        return user
+
+    async def update_user(self, user_id: int, **fields):
+        self.updated.append((user_id, fields))
+        for u in self._by_ext.values():
+            if u.id == user_id:
+                for k, v in fields.items():
+                    setattr(u, k, v)
+                return u
+        return None
+
+
+class FakeSessionRepo:
+    def __init__(self):
+        self.created = []
+        self.revoked_ids: list[int] = []
+        self.revoked_sids: list[str] = []
+        self._by_hash = {}
+
+    async def create_session(self, session):
+        self.created.append(session)
+        self._by_hash[session.session_token_hash] = session
+        return session
+
+    async def get_by_token_hash(self, token_hash: str):
+        return self._by_hash.get(token_hash)
+
+    async def revoke_session(self, session_id: int) -> bool:
+        self.revoked_ids.append(session_id)
+        return True
+
+    async def revoke_by_sid(self, sid: str) -> int:
+        self.revoked_sids.append(sid)
+        return 3
+
+
+class FakeOIDCClient:
+    def __init__(self, *, bundle=None, logout_claims=None, meta=None, userinfo=None):
+        self._bundle = bundle
+        self._logout_claims = logout_claims
+        self._meta = meta or {}
+        self._userinfo = userinfo or {}
+        self.exchange_calls: list[dict] = []
+
+    async def build_authorization_url(self, *, state, nonce, code_challenge):
+        return f"https://idp.example/auth?state={state}&cc={code_challenge}"
+
+    async def exchange_code(self, *, code, code_verifier, expected_nonce):
+        self.exchange_calls.append({"code": code, "cv": code_verifier, "nonce": expected_nonce})
+        if isinstance(self._bundle, Exception):
+            raise self._bundle
+        return self._bundle
+
+    async def verify_logout_token(self, token):
+        if isinstance(self._logout_claims, Exception):
+            raise self._logout_claims
+        return self._logout_claims
+
+    async def discover(self):
+        return self._meta
+
+    async def fetch_userinfo(self, access_token):
+        return self._userinfo
+
+
+def _cfg(**over) -> OIDCConfig:
+    base = {
+        "enabled": True,
+        "client_id": "openrag",
+        "token_encryption_key": KEY,
+        "claim_source": "id_token",
+        "claim_mapping": "",
+        "post_logout_redirect_uri": "",
+        "auto_provision_login": False,
+    }
+    base.update(over)
+    return OIDCConfig(**base)
+
+
+def _service(*, user_repo=None, session_repo=None, client=None, cfg=None) -> AuthService:
+    return AuthService(
+        user_repo=user_repo or FakeUserRepo(),
+        oidc_session_repo=session_repo or FakeSessionRepo(),
+        membership_repo=object(),
+        oidc_client=client,
+        config=cfg or _cfg(),
+    )
+
+
+def _bundle(**over) -> TokenBundle:
+    base = {
+        "id_token": "idtok",
+        "access_token": "acctok",
+        "refresh_token": "reftok",
+        "expires_in": 3600,
+        "token_type": "Bearer",
+        "claims": {"sub": "kc-alice", "sid": "sess-1"},
+    }
+    base.update(over)
+    return TokenBundle(**base)
+
+
+# --------------------------------------------------------------------------- #
+# start_oidc_login
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_login_builds_url_and_roundtrips_state_cookie():
+    svc = _service(client=FakeOIDCClient())
+    result = await svc.start_oidc_login("/dashboard")
+
+    assert result.authorization_url.startswith("https://idp.example/auth?state=")
+    payload = StateCookieSerializer(secret_key=KEY).loads(result.state_cookie_value)
+    assert payload.next_url == "/dashboard"
+    # The state in the signed cookie must match the one in the auth URL.
+    assert f"state={payload.state}" in result.authorization_url
+
+
+@pytest.mark.asyncio
+async def test_login_sanitizes_open_redirect():
+    svc = _service(client=FakeOIDCClient())
+    result = await svc.start_oidc_login("//evil.com/phish")
+    payload = StateCookieSerializer(secret_key=KEY).loads(result.state_cookie_value)
+    assert payload.next_url == "/"
+
+
+@pytest.mark.asyncio
+async def test_login_without_client_raises():
+    svc = _service(client=None)
+    with pytest.raises(OIDCFlowError) as ei:
+        await svc.start_oidc_login("/")
+    assert ei.value.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# handle_oidc_callback
+# --------------------------------------------------------------------------- #
+
+
+async def _login_and_get_state(svc) -> tuple[str, str]:
+    """Run login, return (state, signed_cookie_value)."""
+    result = await svc.start_oidc_login("/home")
+    payload = StateCookieSerializer(secret_key=KEY).loads(result.state_cookie_value)
+    return payload.state, result.state_cookie_value
+
+
+@pytest.mark.asyncio
+async def test_callback_happy_path_creates_session():
+    user = User(id=7, display_name="Alice", external_user_id="kc-alice")
+    urepo = FakeUserRepo({"kc-alice": user})
+    srepo = FakeSessionRepo()
+    client = FakeOIDCClient(bundle=_bundle())
+    svc = _service(user_repo=urepo, session_repo=srepo, client=client)
+
+    state, cookie = await _login_and_get_state(svc)
+    result = await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+
+    assert result.next_url == "/home"
+    assert len(srepo.created) == 1
+    sess = srepo.created[0]
+    assert sess.user_id == 7
+    assert sess.sub == "kc-alice"
+    assert sess.sid == "sess-1"
+    # Only the hash is persisted; the plaintext cookie must hash to it.
+    assert sess.session_token_hash == hash_session_token(result.session_cookie_value)
+    # IdP tokens are stored encrypted, not in the clear.
+    assert sess.access_token_encrypted not in (None, b"acctok")
+
+
+@pytest.mark.asyncio
+async def test_callback_missing_code_or_state():
+    svc = _service(client=FakeOIDCClient(bundle=_bundle()))
+    with pytest.raises(OIDCFlowError, match="Missing 'code' or 'state'"):
+        await svc.handle_oidc_callback(code=None, state="x", state_cookie_raw="y")
+
+
+@pytest.mark.asyncio
+async def test_callback_state_mismatch():
+    svc = _service(client=FakeOIDCClient(bundle=_bundle()))
+    _, cookie = await _login_and_get_state(svc)
+    with pytest.raises(OIDCFlowError, match="state mismatch"):
+        await svc.handle_oidc_callback(code="abc", state="not-the-state", state_cookie_raw=cookie)
+
+
+@pytest.mark.asyncio
+async def test_callback_unregistered_user_rejected():
+    svc = _service(user_repo=FakeUserRepo({}), client=FakeOIDCClient(bundle=_bundle()))
+    state, cookie = await _login_and_get_state(svc)
+    with pytest.raises(OIDCFlowError) as ei:
+        await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+    assert ei.value.status_code == 403
+    assert ei.value.message == "User not registered"
+
+
+@pytest.mark.asyncio
+async def test_callback_auto_provisions_when_enabled():
+    urepo = FakeUserRepo({})
+    svc = _service(
+        user_repo=urepo,
+        client=FakeOIDCClient(bundle=_bundle(claims={"sub": "kc-bob", "name": "Bob", "email": "bob@x.io"})),
+        cfg=_cfg(auto_provision_login=True),
+    )
+    state, cookie = await _login_and_get_state(svc)
+    result = await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+
+    assert len(urepo.created) == 1
+    created = urepo.created[0]
+    assert created.external_user_id == "kc-bob"
+    assert created.display_name == "Bob"
+    assert created.is_admin is False
+    assert result.next_url == "/home"
+
+
+@pytest.mark.asyncio
+async def test_callback_code_exchange_failure_is_masked():
+    svc = _service(client=FakeOIDCClient(bundle=RuntimeError("idp 500")))
+    state, cookie = await _login_and_get_state(svc)
+    with pytest.raises(OIDCFlowError, match="OIDC code exchange failed"):
+        await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+
+
+@pytest.mark.asyncio
+async def test_claim_mapping_from_userinfo_updates_user():
+    user = User(id=9, display_name="Old", external_user_id="kc-c", email="old@x.io")
+    urepo = FakeUserRepo({"kc-c": user})
+    client = FakeOIDCClient(
+        bundle=_bundle(claims={"sub": "kc-c", "sid": "s"}),
+        userinfo={"mail": "new@x.io"},
+    )
+    svc = _service(
+        user_repo=urepo,
+        client=client,
+        cfg=_cfg(claim_source="userinfo", claim_mapping="email:mail"),
+    )
+    state, cookie = await _login_and_get_state(svc)
+    await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+
+    assert urepo.updated and urepo.updated[0][1] == {"email": "new@x.io"}
+
+
+# --------------------------------------------------------------------------- #
+# backchannel logout / logout
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_revokes_by_sid():
+    srepo = FakeSessionRepo()
+    claims = LogoutTokenClaims(iss="i", aud="openrag", sub="s", sid="sess-9", iat=0, jti=None)
+    svc = _service(session_repo=srepo, client=FakeOIDCClient(logout_claims=claims))
+    count = await svc.handle_backchannel_logout("tok")
+    assert count == 3
+    assert srepo.revoked_sids == ["sess-9"]
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_invalid_token_carries_description():
+    svc = _service(client=FakeOIDCClient(logout_claims=ValueError("bad aud")))
+    with pytest.raises(OIDCFlowError) as ei:
+        await svc.handle_backchannel_logout("tok")
+    assert ei.value.error_description == "bad aud"
+
+
+@pytest.mark.asyncio
+async def test_backchannel_logout_sidless_is_noop_200():
+    srepo = FakeSessionRepo()
+    claims = LogoutTokenClaims(iss="i", aud="openrag", sub="s", sid=None, iat=0, jti=None)
+    svc = _service(session_repo=srepo, client=FakeOIDCClient(logout_claims=claims))
+    assert await svc.handle_backchannel_logout("tok") == 0
+    assert srepo.revoked_sids == []
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_and_builds_end_session_url():
+    # Seed a real session via the callback path so the stored id_token is
+    # encrypted with the configured key.
+    user = User(id=5, external_user_id="kc-d")
+    urepo = FakeUserRepo({"kc-d": user})
+    srepo = FakeSessionRepo()
+    client = FakeOIDCClient(
+        bundle=_bundle(claims={"sub": "kc-d", "sid": "z"}),
+        meta={"end_session_endpoint": "https://idp.example/logout"},
+    )
+    svc = _service(user_repo=urepo, session_repo=srepo, client=client)
+    state, cookie = await _login_and_get_state(svc)
+    cb = await svc.handle_oidc_callback(code="abc", state=state, state_cookie_raw=cookie)
+
+    target = await svc.logout(cb.session_cookie_value)
+    assert target.startswith("https://idp.example/logout?")
+    assert "client_id=openrag" in target
+    assert "id_token_hint=idtok" in target
+    assert srepo.revoked_ids == [srepo.created[0].id]
+
+
+@pytest.mark.asyncio
+async def test_logout_no_end_session_returns_none():
+    svc = _service(client=FakeOIDCClient(meta={}))
+    assert await svc.logout(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# pure auth-policy helpers
+# --------------------------------------------------------------------------- #
+
+
+def test_require_admin():
+    assert AuthService.require_admin({"is_admin": True}) == {"is_admin": True}
+    with pytest.raises(OIDCFlowError.__bases__[0]):  # OpenRAGError subclass (AuthError)
+        AuthService.require_admin({"is_admin": False})
+
+
+def test_check_partition_access_role_hierarchy():
+    parts = [{"partition": "p1", "role": "viewer"}]
+    assert AuthService.check_partition_access(
+        user={"is_admin": False}, partition="p1", user_partitions=parts, required_role="viewer"
+    )
+    with pytest.raises(Exception):
+        AuthService.check_partition_access(
+            user={"is_admin": False}, partition="p1", user_partitions=parts, required_role="owner"
+        )
+
+
+def test_check_partition_access_super_admin_bypass():
+    assert AuthService.check_partition_access(
+        user={"is_admin": True},
+        partition="anything",
+        user_partitions=[],
+        required_role="owner",
+        super_admin_mode=True,
+    )
+
+
+def test_validate_file_quota():
+    # Admin bypass.
+    AuthService.validate_file_quota({"is_admin": True}, pending_task_count=99, default_quota=1)
+    # Disabled globally.
+    AuthService.validate_file_quota({"file_count": 50}, pending_task_count=50, default_quota=-1)
+    # Specific limit exceeded (3 indexed + 2 pending >= 5).
+    with pytest.raises(Exception):
+        AuthService.validate_file_quota({"file_count": 3, "file_quota": 5}, pending_task_count=2, default_quota=10)
+    # Under the limit is fine.
+    AuthService.validate_file_quota({"file_count": 1, "file_quota": 5}, pending_task_count=1, default_quota=10)

@@ -22,3 +22,7 @@ class OIDCConfig(BaseModel):
     claim_source: str = "id_token"
     claim_mapping: str = ""
     post_logout_redirect_uri: str = ""
+    # When True, an unknown ``sub`` at callback time provisions a
+    # non-admin user on the fly from the ID-token claims. Default keeps
+    # the strict "admin pre-creates every user" policy.
+    auto_provision_login: bool = False

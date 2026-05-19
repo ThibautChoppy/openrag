@@ -20,6 +20,7 @@ queries.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from core.embeddings import embedder_registry
@@ -53,12 +54,36 @@ if TYPE_CHECKING:
     from core.ports.user_repo import UserRepository
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
+    from services.orchestrators.auth_service import AuthService
 
 
 _NO_SETTINGS_MESSAGE = (
     "ServiceContainer was constructed without a Settings instance — "
     "pass Settings to ServiceContainer(...) to wire storage adapters."
 )
+
+
+def _oidc_config_from_env():
+    """Build :class:`OIDCConfig` from the same env vars ``main.py`` validates.
+
+    Phase 8A.1 keeps OIDC config env-sourced (it is not yet wired into the
+    root :class:`Settings`); ``enabled`` mirrors ``AUTH_MODE=oidc``.
+    """
+    from core.config.auth import OIDCConfig
+
+    return OIDCConfig(
+        enabled=os.getenv("AUTH_MODE", "token").strip().lower() == "oidc",
+        issuer_url=os.getenv("OIDC_ENDPOINT", "") or "",
+        client_id=os.getenv("OIDC_CLIENT_ID", "") or "",
+        client_secret=os.getenv("OIDC_CLIENT_SECRET", "") or "",
+        redirect_uri=os.getenv("OIDC_REDIRECT_URI", "") or "",
+        scopes=os.getenv("OIDC_SCOPES", "openid email profile offline_access"),
+        token_encryption_key=os.getenv("OIDC_TOKEN_ENCRYPTION_KEY", "") or "",
+        claim_source=os.getenv("OIDC_CLAIM_SOURCE", "id_token").strip().lower(),
+        claim_mapping=os.getenv("OIDC_CLAIM_MAPPING", "").strip(),
+        post_logout_redirect_uri=os.getenv("OIDC_POST_LOGOUT_REDIRECT_URI", "") or "",
+        auto_provision_login=os.getenv("OIDC_AUTO_PROVISION_LOGIN", "false").strip().lower() == "true",
+    )
 
 
 class ServiceContainer:
@@ -73,6 +98,7 @@ class ServiceContainer:
         self._settings = settings
         self._catalog_store: CatalogStore | None = create_catalog_store(settings) if settings is not None else None
         self._vector_store: VectorStore | None = create_vector_store(settings) if settings is not None else None
+        self._auth_service: AuthService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -180,6 +206,36 @@ class ServiceContainer:
     @property
     def preset_repo(self) -> PresetRepository:
         return self.catalog_store.preset_repo
+
+    # ------------------------------------------------------------------
+    # Orchestrators (Phase 8)
+    # ------------------------------------------------------------------
+
+    @property
+    def auth_service(self) -> AuthService:
+        """AuthService — lazily built, cached for the container's lifetime.
+
+        The OIDC client is only constructed in ``AUTH_MODE=oidc`` (it reads
+        required env vars and would raise otherwise); in token mode it is
+        ``None`` and the OIDC flow methods refuse cleanly.
+        """
+        if self._auth_service is None:
+            from services.orchestrators.auth_service import AuthService
+
+            cfg = _oidc_config_from_env()
+            client = None
+            if cfg.enabled:
+                from components.auth import get_oidc_client
+
+                client = get_oidc_client()
+            self._auth_service = AuthService(
+                user_repo=self.user_repo,
+                oidc_session_repo=self.oidc_session_repo,
+                membership_repo=self.membership_repo,
+                oidc_client=client,
+                config=cfg,
+            )
+        return self._auth_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

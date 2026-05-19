@@ -256,6 +256,20 @@ app.add_middleware(
 )
 
 app.state.app_state = AppState(config)
+
+# Phase 8 composition root. Attached here as minimal wiring so the thinned
+# routers can resolve services via di.providers; Phase 11 moves this into a
+# FastAPI lifespan and calls ``await container.initialize()``. Construction
+# is best-effort: a Milvus/PG hiccup at import must not stop the app from
+# booting (the providers raise 503 if the container is absent).
+try:
+    from di.container import ServiceContainer
+
+    app.state.container = ServiceContainer(config)
+except Exception as _container_exc:  # pragma: no cover - defensive boot guard
+    logger.warning(f"ServiceContainer wiring skipped: {_container_exc}")
+    app.state.container = None
+
 app.mount("/static", StaticFiles(directory=DATA_DIR.resolve(), check_dir=True), name="static")
 
 
