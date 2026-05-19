@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
     from services.orchestrators.partition_service import PartitionService
+    from services.orchestrators.retrieval_service import RetrievalService
     from services.orchestrators.user_service import UserService
     from services.orchestrators.workspace_service import WorkspaceService
 
@@ -105,6 +106,7 @@ class ServiceContainer:
         self._user_service: UserService | None = None
         self._partition_service: PartitionService | None = None
         self._workspace_service: WorkspaceService | None = None
+        self._retrieval_service: RetrievalService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -287,6 +289,45 @@ class ServiceContainer:
                 collection=self._settings.vectordb.collection_name,
             )
         return self._workspace_service
+
+    @property
+    def retrieval_service(self) -> RetrievalService:
+        """RetrievalService — lazily built, cached for the container's lifetime.
+
+        The ``RetrievalSearcher`` is the Ray-backed ``MilvusRayShim``
+        during the Phase-8 shim period (Ray cleanup is Phase 9); it is
+        resolved lazily so the ``Vectordb`` actor only needs to exist at
+        first request, not at container construction.
+        """
+        if self._retrieval_service is None:
+            from services.orchestrators.retrieval_service import RetrievalService
+            from services.storage.milvus_ray_shim import from_ray_namespace
+
+            llm_cfg = self._settings.llm.model_dump()
+            llm = self.create_llm(
+                "vllm",
+                endpoint=llm_cfg["base_url"],
+                model_name=llm_cfg["model"],
+                api_key=llm_cfg.get("api_key", ""),
+                **{k: v for k, v in llm_cfg.items() if k not in ("base_url", "model", "api_key")},
+            )
+            reranker = None
+            rcfg = self._settings.reranker
+            if rcfg.enabled:
+                reranker = self.create_reranker(
+                    rcfg.provider,
+                    endpoint=rcfg.base_url,
+                    model_name=rcfg.model_name,
+                    api_key=rcfg.api_key,
+                    timeout=rcfg.timeout,
+                )
+            self._retrieval_service = RetrievalService(
+                searcher=from_ray_namespace(),
+                reranker=reranker,
+                llm=llm,
+                config=self._settings,
+            )
+        return self._retrieval_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

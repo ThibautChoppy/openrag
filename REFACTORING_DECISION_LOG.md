@@ -1139,6 +1139,69 @@ between the vector-store and catalog-store bootstrap steps.
   `partitions_for_collection_<name>` derivation (see Phase 7E entry 2).
 
 ---
+## Phase 8 — Orchestrators (2026-05-19)
+
+**1. Provider sourcing: routers read `request.app.state.container`.**
+- Why: the 8 Phase-8 doc shows providers as one-line accessors; the
+  ServiceContainer is not attached to the live app until Phase 11. We
+  attach it best-effort in `main.py` now (not `initialize()`d), so the
+  thinned routers resolve services but the DB-backed flows stay dormant
+  until Phase 11. Token-mode auth routes already 400 before any service.
+- Alternative considered: a lazy module-level container singleton in
+  `di/providers.py` (mirrors `components/auth/deps.py`). Rejected — the
+  one-liner/app.state shape matches the doc and Phase-11 cutover.
+
+**2. OIDCConfig built from env in the container, not wired into Settings.**
+- Why: keeps 8A.1 scoped; `OIDCConfig` exists but is not in root
+  `Settings`. Added a missing `auto_provision_login` field.
+- Alternative: wire it into `Settings` now — deferred (config refactor).
+
+**3. Thin routers: typed core exceptions propagate to the global
+`OpenRAGError` handler; `HTTPException` kept only where the legacy body
+must stay byte-identical** (id==1 / 409-exists / file|workspace 404s).
+- Why: the legacy `_check_*` guards already surfaced 404s via the global
+  handler, so propagating `UserNotFoundError`/`PartitionNotFoundError`/
+  `ValidationError` reproduces them; only the non-bracketed
+  `{"detail": ...}` `HTTPException` bodies need to stay verbatim.
+
+**4. Constructor extensions over the plan's prescribed signatures.**
+- Why: to preserve legacy behaviour without reaching into Ray/config,
+  orchestrators take extra container-supplied args: `collection`
+  (`settings.vectordb.collection_name` — Partition/Workspace/Retrieval),
+  `user_repo` (PartitionService, to reproduce `VDBUserNotFound`),
+  `default_file_quota` (UserService), and orchestrator→orchestrator
+  injection (UserService←PartitionService for the delete-user cascade).
+- Alternative: hold the plan signatures exactly — rejected, would drop
+  behaviour (cascade) or smuggle config/Ray into the service.
+
+**5. 8A.2 delete-user owner-partition cascade deferred, then restored in
+8B.1.** UserService.delete_user was a plain repo delete in 8A.2 (gap
+logged); 8B.1 composes PartitionService so it deletes owned partitions
+(vectors + rows) first, matching the legacy Ray `delete_user`.
+
+**6. 8C searcher backing: inject the Ray-backed `MilvusRayShim` behind
+the `RetrievalSearcher` port during the Phase-8 shim.**
+- Why: the only `RetrievalSearcher` impl is `MilvusRayShim` (Ray
+  `Vectordb` actor — embeds + hybrid-searches internally). The 8C plan
+  text says "retriever calls `vector_store.search()` directly (no Ray)",
+  but the dev-workflow doc puts Ray cleanup in Phase 9 and allows
+  orchestrators to call Ray *behind a port* during the shim. Injecting
+  the shim keeps the orchestrator file Ray-free (8H satisfied: no
+  Ray remote-call, no Ray import — Ray is behind the port) and avoids a
+  risky reimplementation of hybrid-search / surrounding-chunks /
+  similarity behaviour in the hot search path.
+- Alternative considered: write a new `VectorStoreSearcher` on the clean
+  `VectorStore` port now (embed via Embedder factory + `search`).
+  Rejected for this phase — real regression surface in core search; the
+  clean adapter lands in Phase 9 when the shim is deleted. **Flag for
+  Phase 9:** add `VectorStoreSearcher`, swap the container wiring, delete
+  `MilvusRayShim`.
+- Consequence: `RetrievalService.__init__` deviates from the plan's
+  `(vector_store, embedder_factory, reranker_factory, llm_factory,
+  document_repo, config)` — with the shim searcher those are unused;
+  it takes the built `searcher` / `reranker` / `llm` + `config`.
+
+---
 ## Template for future entries
 
 ```

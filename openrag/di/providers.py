@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from di.container import ServiceContainer
     from services.orchestrators.auth_service import AuthService
     from services.orchestrators.partition_service import PartitionService
+    from services.orchestrators.retrieval_service import RetrievalService
     from services.orchestrators.user_service import UserService
     from services.orchestrators.workspace_service import WorkspaceService
 
@@ -47,3 +48,7 @@ def get_partition_service(request: Request) -> PartitionService:
 
 def get_workspace_service(request: Request) -> WorkspaceService:
     return get_container(request).workspace_service
+
+
+def get_retrieval_service(request: Request) -> RetrievalService:
+    return get_container(request).retrieval_service

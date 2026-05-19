@@ -1,11 +1,21 @@
+"""Semantic search routes — thin HTTP layer over RetrievalService.
+
+Phase 8C.1: the retrieval call (was ``indexer.asearch.remote`` + the
+legacy ``_expand_with_related_chunks``) moved to
+``services.orchestrators.retrieval_service.RetrievalService.search``.
+This module keeps HTTP transport only: request-scoped authorization,
+partition resolution from the authenticated user, the byte-identical
+workspace-not-found 404 guard, ``request.url_for`` links, and response
+shaping (domain ``Chunk`` → ``{link, metadata, content}``).
+"""
+
 from typing import Annotated
 
-from components.ray_utils import call_ray_actor_with_timeout
-from components.retriever import _expand_with_related_chunks
-from config import load_config
+from di.providers import get_retrieval_service, get_workspace_service
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from utils.dependencies import get_indexer, get_vectordb
+from services.orchestrators.retrieval_service import RetrievalService
+from services.orchestrators.workspace_service import WorkspaceService
 from utils.logger import get_logger
 
 from .utils import (
@@ -13,9 +23,6 @@ from .utils import (
     require_partition_viewer,
     require_partitions_viewer,
 )
-
-_config = load_config()
-VECTORDB_TIMEOUT = _config.ray.indexer.vectordb_timeout
 
 logger = get_logger()
 
@@ -57,6 +64,17 @@ class CommonSearchParams:
         self.top_k = top_k
         self.similarity_threshold = similarity_threshold
         self.filter = filter
+
+
+def _documents(request: Request, chunks) -> list[dict]:
+    return [
+        {
+            "link": str(request.url_for("get_extract", extract_id=c.metadata.get("_id") or c.id)),
+            "metadata": c.metadata,
+            "content": c.text,
+        }
+        for c in chunks
+    ]
 
 
 @router.get(
@@ -114,12 +132,11 @@ async def search_multiple_partitions(
     related_params: Annotated[RelatedDocSearchParams, Depends()],
     partitions: list[str] | None = Query(default=["all"], description="List of partitions to search"),
     workspace: str | None = Query(None, description="Workspace ID to filter results"),
-    indexer=Depends(get_indexer),
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partitions_viewer),
     user_partitions=Depends(current_user_or_admin_partitions_list),
+    service: RetrievalService = Depends(get_retrieval_service),
+    workspaces: WorkspaceService = Depends(get_workspace_service),
 ):
-    # Fetch user partitions if "all" is specified, or all partitions if super admin
     if partitions == ["all"]:
         partitions = user_partitions
 
@@ -134,53 +151,29 @@ async def search_multiple_partitions(
 
     filter_params = None
     if workspace:
-        ws = await call_ray_actor_with_timeout(
-            vectordb.get_workspace.remote(workspace),
-            timeout=VECTORDB_TIMEOUT,
-            task_description=f"get_workspace({workspace})",
-        )
+        ws = await workspaces.get_workspace(workspace)
         if not ws or ws["partition_name"] not in partitions:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
-
         filter_params = {"workspace_id": workspace}
 
-    results = await indexer.asearch.remote(
-        query=search_params.text,
+    results = await service.search(
+        text=search_params.text,
+        partitions=partitions,
         top_k=search_params.top_k,
         similarity_threshold=search_params.similarity_threshold,
-        partition=partitions,
         filter=search_params.filter,
         filter_params=filter_params,
+        include_related=related_params.include_related,
+        include_ancestors=related_params.include_ancestors,
+        related_limit=related_params.related_limit,
+        max_ancestor_depth=related_params.max_ancestor_depth,
     )
-    log.info(
-        "Semantic search on multiple partitions completed.",
-        result_count=len(results),
+    log.info("Semantic search on multiple partitions completed.", result_count=len(results))
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"documents": _documents(request, results)},
     )
-
-    # Expand with related/ancestor chunks if requested
-    if related_params.include_related or related_params.include_ancestors:
-        results = await _expand_with_related_chunks(
-            results=results,
-            db=vectordb,
-            include_related=related_params.include_related,
-            include_ancestors=related_params.include_ancestors,
-            related_limit=related_params.related_limit,
-            max_ancestor_depth=related_params.max_ancestor_depth,
-        )
-        log.info(
-            "Expanded results with related/ancestor chunks.",
-            expanded_count=len(results),
-        )
-
-    documents = [
-        {
-            "link": str(request.url_for("get_extract", extract_id=doc.metadata["_id"])),
-            "metadata": doc.metadata,
-            "content": doc.page_content,
-        }
-        for doc in results
-    ]
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"documents": documents})
 
 
 @router.get(
@@ -229,9 +222,9 @@ async def search_one_partition(
     search_params: Annotated[CommonSearchParams, Depends()],
     related_params: Annotated[RelatedDocSearchParams, Depends()],
     workspace: str | None = Query(None, description="Workspace ID to filter results"),
-    indexer=Depends(get_indexer),
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: RetrievalService = Depends(get_retrieval_service),
+    workspaces: WorkspaceService = Depends(get_workspace_service),
 ):
     log = logger.bind(
         partition=partition,
@@ -243,51 +236,29 @@ async def search_one_partition(
     )
     filter_params = None
     if workspace:
-        ws = await call_ray_actor_with_timeout(
-            vectordb.get_workspace.remote(workspace),
-            timeout=VECTORDB_TIMEOUT,
-            task_description=f"get_workspace({workspace})",
-        )
+        ws = await workspaces.get_workspace(workspace)
         if not ws or ws["partition_name"] != partition:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
-
         filter_params = {"workspace_id": workspace}
 
-    results = await indexer.asearch.remote(
-        query=search_params.text,
+    results = await service.search(
+        text=search_params.text,
+        partitions=partition,
         top_k=search_params.top_k,
         similarity_threshold=search_params.similarity_threshold,
-        partition=partition,
         filter=search_params.filter,
         filter_params=filter_params,
+        include_related=related_params.include_related,
+        include_ancestors=related_params.include_ancestors,
+        related_limit=related_params.related_limit,
+        max_ancestor_depth=related_params.max_ancestor_depth,
     )
-
     log.info("Semantic search on single partition completed.", result_count=len(results))
 
-    # Expand with related/ancestor chunks if requested
-    if related_params.include_related or related_params.include_ancestors:
-        results = await _expand_with_related_chunks(
-            results=results,
-            db=vectordb,
-            include_related=related_params.include_related,
-            include_ancestors=related_params.include_ancestors,
-            related_limit=related_params.related_limit,
-            max_ancestor_depth=related_params.max_ancestor_depth,
-        )
-        log.info(
-            "Expanded results with related/ancestor chunks.",
-            expanded_count=len(results),
-        )
-
-    documents = [
-        {
-            "link": str(request.url_for("get_extract", extract_id=doc.metadata["_id"])),
-            "metadata": doc.metadata,
-            "content": doc.page_content,
-        }
-        for doc in results
-    ]
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"documents": documents})
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"documents": _documents(request, results)},
+    )
 
 
 @router.get(
@@ -331,31 +302,25 @@ async def search_file(
     partition: str,
     file_id: str,
     search_params: Annotated[CommonSearchParams, Depends()],
-    indexer=Depends(get_indexer),
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: RetrievalService = Depends(get_retrieval_service),
 ):
     log = logger.bind(partition=partition, file_id=file_id, query=search_params.text, top_k=search_params.top_k)
 
     filter = "file_id == {_file_id}" + (f" AND {search_params.filter}" if search_params.filter else "")
     params = {"_file_id": file_id}
 
-    results = await indexer.asearch.remote(
-        query=search_params.text,
+    results = await service.search(
+        text=search_params.text,
+        partitions=partition,
         top_k=search_params.top_k,
         similarity_threshold=search_params.similarity_threshold,
-        partition=partition,
         filter=filter,
         filter_params=params,
     )
     log.info("Semantic search on specific file completed.", result_count=len(results))
 
-    documents = [
-        {
-            "link": str(request.url_for("get_extract", extract_id=doc.metadata["_id"])),
-            "metadata": doc.metadata,
-            "content": doc.page_content,
-        }
-        for doc in results
-    ]
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"documents": documents})
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"documents": _documents(request, results)},
+    )
