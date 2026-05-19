@@ -117,14 +117,19 @@ Here are some other variables related to openai-compatible endpoint.
 | `TRANSCRIBER_MODEL` | `str` | `openai/whisper-large-v3-turbo` | Whisper model identifier served by VLLM for speech-to-text conversion. Other options: `openai/whisper-small`, `openai/whisper-large-v3-turbo`, etc.|
 | `TRANSCRIBER_MAX_CONCURRENT_CHUNKS` | `int` | `20` | Maximum number of audio chunks processed simultaneously. Increasing this value improves throughput when sufficient GPU resources are available. |
 | `TRANSCRIBER_TIMEOUT` | `int` | `3600` | Maximum duration in seconds allowed for a single transcription request. |
+| `TRANSCRIBER_DIRECT_UPLOAD_SUFFIXES` | `str` | `.wav\|.flac\|.ogg\|.mp3\|.mp4\|.m4a\|.webm\|.mpeg\|.mpga` | Pipe-delimited list of audio file suffixes uploaded to the transcriber as-is (no WAV conversion). Other formats are re-encoded to WAV before upload. Trim this list when your transcriber backend (e.g. vLLM/libsndfile) only accepts a subset. |
 | `USE_WHISPER_LANG_DETECTOR` | `bool` | `true` | When enabled, uses a local Whisper-based language detector to identify the source audio language before transcription. |
 
 </div>
 
-:::danger[About whisper with vLLM]
-As noted in [this PR](https://github.com/linagora/openrag/pull/134), the current vLLM implementation of Whisper can mis-detect the language and output English regardless of the source audio. For details, see [this vLLM issue](https://github.com/vllm-project/vllm/issues/14174).
+:::note[About whisper with vLLM and language detection]
+As noted in [this PR](https://github.com/linagora/openrag/pull/134), vLLM's Whisper implementation could mis-detect the language and output English regardless of the source audio. For details, see [this vLLM issue](https://github.com/vllm-project/vllm/issues/14174).
 
-To improve accuracy, we use a local Whisper-based language detector that is activated by default with the default setting (`USE_WHISPER_LANG_DETECTOR=true`). 
+This bug was fixed in **vLLM v0.17.0** ([PR #34342](https://github.com/vllm-project/vllm/pull/34342)). If you are running a vLLM version **older than v0.17.0**, set `USE_WHISPER_LANG_DETECTOR=true` to work around the issue: OpenRAG will use a local Whisper-based language detector to identify the source language and pass it explicitly to the transcription endpoint.
+
+If your deployment already uses vLLM ≥ v0.17.0, you can safely set `USE_WHISPER_LANG_DETECTOR=false` to skip the local detection step.
+
+The default OpenRAG transcriber stack now ships with **vLLM v0.19.1**, which includes the fix.
 :::
 
 ### Chunking
@@ -484,6 +489,7 @@ The following environment variables configure the FastAPI server and control acc
 | `DEFAULT_FILE_QUOTA` | `int` | `-1` | Default per-user file quota. `<0` disables quotas globally; `>=0` sets the default limit when a user has no explicit quota. |
 |`API_NUM_WORKERS`|`int`|1|Number of uvicorn workers|
 | `PREFERRED_URL_SCHEME` | `string` | `null` | URL scheme (`http` or `https`) used when generating URLs in API responses (e.g., `task_status_url`). When running behind a reverse proxy that terminates SSL, set this to `https` to ensure generated URLs use the correct scheme. If unset, the scheme from the incoming request is used. |
+| `CORS_EXTRA_ORIGINS` | `string` | _(unset)_ | Semicolon-separated list of additional origins allowed by CORS (e.g. `https://app.example.com;https://other.example.com`). Extends the default list without replacing it. |
 
 
 :::caution[Security Notice]

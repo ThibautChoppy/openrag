@@ -42,7 +42,7 @@ class BaseLoader(ABC):
             "temperature": 0.2,
             "max_retries": 3,
             "timeout": 60,
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            # "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         }
         settings.update(model_settings)
 

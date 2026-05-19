@@ -207,7 +207,8 @@ loader:
   docling_retry_base_delay: 2.0
 
   # Env: TRANSCRIBER_BASE_URL, TRANSCRIBER_API_KEY, TRANSCRIBER_MODEL,
-  #      TRANSCRIBER_TIMEOUT, TRANSCRIBER_MAX_CONCURRENT_CHUNKS, USE_WHISPER_LANG_DETECTOR
+  #      TRANSCRIBER_TIMEOUT, TRANSCRIBER_MAX_CONCURRENT_CHUNKS, USE_WHISPER_LANG_DETECTOR,
+  #      TRANSCRIBER_DIRECT_UPLOAD_SUFFIXES (pipe-separated, e.g. ".mp3|.mp4|.wav")
   transcriber:
     base_url: http://transcriber:8000/v1
     api_key: EMPTY
@@ -215,6 +216,7 @@ loader:
     timeout: 3600
     max_concurrent_chunks: 20
     use_whisper_lang_detector: true
+    direct_upload_suffixes: ".wav|.flac|.ogg|.mp3|.mp4|.m4a|.webm|.mpeg|.mpga"
 
   # Env: OPENAI_LOADER_BASE_URL, OPENAI_LOADER_API_KEY, OPENAI_LOADER_MODEL,
   #      OPENAI_LOADER_TEMPERATURE, OPENAI_LOADER_TIMEOUT, OPENAI_LOADER_MAX_RETRIES,
@@ -278,7 +280,7 @@ chunker:
 # --- Retriever ---
 # Env: RETRIEVER_TYPE, RETRIEVER_TOP_K, SIMILARITY_THRESHOLD,
 #      WITH_SURROUNDING_CHUNKS, INCLUDE_RELATED, INCLUDE_ANCESTORS,
-#      RELATED_LIMIT, MAX_DEPTH
+#      RELATED_LIMIT, MAX_DEPTH, RETRIEVER_ALLOW_FILTERLESS_FALLBACK
 retriever:
   type: single
   top_k: 50
@@ -290,6 +292,9 @@ retriever:
   max_ancestor_depth: 10
   k_queries: 3
   combine: false
+  # When a temporally-filtered retrieval returns no documents, re-query
+  # without the filter. Set to false for strict temporal retrieval.
+  allow_filterless_fallback: true
 
 # --- RAG ---
 # Env: RAG_MODE

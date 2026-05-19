@@ -365,10 +365,13 @@ OpenRag supports two authentication modes, controlled by the `AUTH_MODE` environ
 | `OIDC_CLAIM_MAPPING` | (none) | CSV of `db_field:claim` pairs to sync IdP claims into the users row on every login (whitelist: `display_name`, `email`). Unset = no post-login update. |
 | `OIDC_SCOPES` | `openid email profile offline_access` | Space-separated scope list (include `offline_access` for refresh tokens) |
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | — | URL the IdP sends the user to after RP-initiated logout. No default (an OpenRag URL would re-trigger OIDC login) |
+| `OIDC_AUTO_PROVISION_LOGIN` | `false` | When `true`, an unknown `sub` triggers on-the-fly creation of a non-admin user from the ID-token claims (`name`/`preferred_username` → `display_name`, `email` → `email`). Default keeps the strict admin-pre-provisioning policy below. |
 
 **User Matching & Provisioning**:
 
-When a user logs in via OIDC, matching is **exclusively** by `users.external_user_id == sub` (the stable OIDC claim). There is no email fallback and no auto-provisioning: if the `sub` is unknown, the callback returns `403 "User not registered"`. Admins MUST pre-create every user with the expected `external_user_id`.
+When a user logs in via OIDC, matching is **exclusively** by `users.external_user_id == sub` (the stable OIDC claim). There is no email fallback. If the `sub` is unknown, the callback either:
+- returns `403 "User not registered"` (default — admins must pre-create every user), or
+- creates a non-admin user from the ID-token claims when `OIDC_AUTO_PROVISION_LOGIN=true`. Auto-provisioned users inherit the default file quota; `is_admin` is **always** `false` (operators can promote afterwards via `/users/{id}` or `/users/`).
 
 Optionally, if `OIDC_CLAIM_MAPPING` is set, after a successful match the callback reads the configured claims (from the ID token or `/userinfo`, per `OIDC_CLAIM_SOURCE`) and updates the user row. The writable whitelist is strict — only `display_name` and `email` are allowed; `is_admin`, `external_user_id`, `file_quota`, `token` are never writable via claim mapping.
 

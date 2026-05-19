@@ -32,21 +32,28 @@ class AudioTranscriber:
             timeout=config.loader.transcriber.timeout,
         )
         self.model_name = config.loader.transcriber.model_name
-        self.use_whisper_lang_detector = config.loader.transcriber.get("use_whisper_lang_detector", True)
+        self.use_whisper_lang_detector = config.loader.transcriber.use_whisper_lang_detector
+        self.direct_upload_suffixes = config.loader.transcriber.direct_upload_suffixes
 
     async def transcribe(self, file_path: Path) -> str:
-        # vLLM uses soundfile/libsndfile internally, which only supports WAV/FLAC/OGG.
-        # mp3, mp4, m4a, etc. raise "Format not recognised", so convert to WAV first.
+        # Formats in self.direct_upload_suffixes (configurable via
+        # TRANSCRIBER_DIRECT_UPLOAD_SUFFIXES) are sent as-is to avoid the ~10x
+        # size inflation from WAV conversion (Scaleway cap: 100 MB; OpenAI: 25 MB).
+        # Everything else falls back to WAV for vLLM/libsndfile deployments.
 
+        tmp_wav = None
         try:
             logger.bind(file=file_path.name)
-            if file_path.suffix.lower() == ".wav":
+            suffix = file_path.suffix.lower()
+            if suffix in self.direct_upload_suffixes:
                 wav_path = file_path
-                tmp_wav = None
-                sound = await asyncio.to_thread(AudioSegment.from_file, wav_path)
+                # We still need to load the audio so language detection can
+                # extract its 30-second sample. ``AudioSegment.from_file``
+                # uses ffmpeg under the hood, so it handles every format.
+                sound = await asyncio.to_thread(AudioSegment.from_file, file_path)
             else:
                 sound = await asyncio.to_thread(AudioSegment.from_file, file_path)
-                logger.info("Converting audio to WAV", duration_s=f"{len(sound) / 1000:.1f}")
+                logger.info("Converting audio to WAV (unsupported container)", duration_s=f"{len(sound) / 1000:.1f}")
                 tmp_wav = file_path.with_suffix(".wav")
                 await asyncio.to_thread(sound.export, tmp_wav, format="wav")
                 wav_path = tmp_wav

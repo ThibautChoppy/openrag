@@ -2,7 +2,9 @@ import asyncio
 import copy
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
+import openai
 import ray
 from components.prompts import (
     QUERY_CONTEXTUALIZER_PROMPT,
@@ -14,8 +16,9 @@ from components.utils import detect_language, format_context, format_web_context
 from components.websearch import WebSearchFactory
 from config import load_config
 from langchain_core.documents.base import Document
+from langchain_core.exceptions import OutputParserException
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from utils.logger import get_logger
 
 from .llm import LLM
@@ -34,19 +37,80 @@ class RAGMODE(Enum):
     CHATBOTRAG = "ChatBotRag"
 
 
-class SearchQueries(BaseModel):
-    """Search queries for semantic retrieval."""
+class TemporalPredicate(BaseModel):
+    """A single constraint on a document's creation date.
 
-    query_list: list[str] = Field(..., description="Search sub-queries to retrieve relevant documents.")
+    Multiple predicates on the same `Query` are combined with logical AND.
+    Use two predicates to express a closed range (e.g. last month):
+      [{op: ">=", value: "2026-03-01..."}, {op: "<=", value: "2026-03-31..."}]
+    """
+
+    field: Literal["created_at"] = Field(
+        default="created_at",
+        description="Document metadata field to filter on. Always `created_at` for now.",
+    )
+    operator: Literal[">", "<", ">=", "<="] = Field(
+        description="Comparison operator applied to the date field.",
+    )
+    value: str = Field(
+        description='ISO 8601 datetime with timezone, e.g. "2026-03-15T00:00:00+00:00".',
+    )
+
+
+class Query(BaseModel):
+    """A single vector database search query with optional temporal filters on document creation date.
+
+    Predicates in `temporal_filters` are AND-combined. To express an exclusion
+    (e.g. "last year except March"), emit TWO `Query` objects, each with its own
+    AND-combined predicates covering one side of the gap.
+    """
+
+    query: str = Field(description="A semantically enriched, descriptive query for vector similarity search.")
+    temporal_filters: list[TemporalPredicate] | None = Field(
+        default=None,
+        description="Date predicates on `created_at`, AND-combined. Null when no temporal reference in the query.",
+    )
+
+    def to_milvus_filter(self) -> str | None:
+        """The temporal_filters attributes are already checked through the Pydantic types, except for date value that is kept as string,
+        as LLM sometimes give correct but not entirely complete date
+        """
+
+        if not self.temporal_filters:
+            return None
+        parts = []
+        for p in self.temporal_filters:
+            try:
+                datetime.fromisoformat(p.value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Dropping temporal predicate with non-ISO value",
+                    field=p.field,
+                    operator=p.operator,
+                    value=p.value,
+                )
+                continue
+            parts.append(f'{p.field} {p.operator} ISO "{p.value}"')
+        if not parts:
+            return None
+        return " and ".join(parts)
 
     def __str__(self) -> str:
-        return " -- ".join(f"Query: {q}" for q in self.query_list)
+        return f"Query: {self.query}, Filter: {self.to_milvus_filter()}"
+
+
+class SearchQueries(BaseModel):
+    query_list: list[Query] = Field(..., description="Search sub-queries to retrieve relevant documents.")
+
+    def __str__(self) -> str:
+        return " --- ".join(str(q) for q in self.query_list)
 
 
 class RetrieverPipeline:
     def __init__(self) -> None:
         # retriever
         self.retriever: BaseRetriever = RetrieverFactory.create_retriever(config=config)
+        self.allow_filterless_fallback = config.retriever.allow_filterless_fallback
 
         # reranker
         self.reranker_enabled = config.reranker.enabled
@@ -57,20 +121,36 @@ class RetrieverPipeline:
     async def retrieve_docs(
         self,
         partition: list[str],
-        query: str,
+        query: Query,
         top_k: int | None = None,
-        filter: str | None = None,
         filter_params: dict | None = None,
     ) -> list[Document]:
+        milvus_filter = query.to_milvus_filter()
         docs = await self.retriever.retrieve(
-            partition=partition, query=query, filter=filter, filter_params=filter_params
+            partition=partition, query=query.query, filter=milvus_filter, filter_params=filter_params
         )
+
+        # Fallback: drop temporal filter if it wiped out all candidates.
+        # Gated by `retriever.allow_filterless_fallback` so deployments that
+        # prefer strict temporal retrieval can opt out (returns no docs
+        # rather than temporally-incorrect ones).
+        if not docs and milvus_filter and self.allow_filterless_fallback:
+            logger.warning(
+                "Temporal filter dropped: no documents matched, retrying without filter",
+                query=str(query.query),
+                filter=milvus_filter,
+                partition=partition,
+            )
+            docs = await self.retriever.retrieve(
+                partition=partition, query=query.query, filter=None, filter_params=filter_params
+            )
+
         logger.debug("Documents retreived", document_count=len(docs))
 
         if docs:
             # 1. rerank all the docs
             if self.reranker_enabled:
-                docs = await self.reranker.rerank(query=query, documents=docs, top_k=None)
+                docs = await self.reranker.rerank(query=query.query, documents=docs, top_k=None)
                 logger.debug("Documents reranked", document_count=len(docs))
 
             # 2. expand the docs with related documents
@@ -89,7 +169,7 @@ class RetrieverPipeline:
 
                 # rerank again after expansion if reranker is enabled
                 if self.reranker_enabled:
-                    docs = await self.reranker.rerank(query=query, documents=docs, top_k=None)
+                    docs = await self.reranker.rerank(query=query.query, documents=docs, top_k=None)
                     logger.debug("Documents after expansion and reranking", document_count=len(docs))
 
         return docs
@@ -99,11 +179,10 @@ class RetrieverPipeline:
         partition: list[str],
         search_queries: SearchQueries,
         top_k: int | None = None,
-        filter: str | None = None,
         filter_params: dict | None = None,
     ) -> list[Document]:
         tasks = [
-            self.retrieve_docs(partition=partition, query=q, top_k=top_k, filter=filter, filter_params=filter_params)
+            self.retrieve_docs(partition=partition, query=q, top_k=top_k, filter_params=filter_params)
             for q in search_queries.query_list
         ]
         results = await asyncio.gather(*tasks)
@@ -125,12 +204,20 @@ class RagPipeline:
         self.max_context_tokens = config.reranker.top_k * config.chunker.chunk_size
 
         self.llm_client = LLM(config.llm, logger)
-        self.query_generator = ChatOpenAI(
+
+        llm = ChatOpenAI(
             base_url=config.llm.base_url,
             api_key=config.llm.api_key,
             model=config.llm.model,
             temperature=config.llm.temperature,
-        ).with_structured_output(SearchQueries, method="function_calling")
+        )
+
+        primary = llm.with_structured_output(SearchQueries, method="json_schema", strict=True)
+        fallback = llm.with_structured_output(SearchQueries, method="function_calling", strict=False)
+        self.query_generator = primary.with_fallbacks(
+            [fallback],
+            exceptions_to_handle=(openai.BadRequestError,),
+        )
 
         self.max_contextualized_query_len = config.rag.max_contextualized_query_len
 
@@ -149,7 +236,7 @@ class RagPipeline:
             case RAGMODE.SIMPLERAG:
                 # For SimpleRag, we don't need to contextualize the query as the chat history is not taken into account
                 last_msg = messages[-1]
-                return SearchQueries(query_list=[last_msg["content"]])
+                return SearchQueries(query_list=[Query(query=last_msg["content"])])
 
             case RAGMODE.CHATBOTRAG:
                 # Contextualize the query based on the chat history
@@ -157,31 +244,37 @@ class RagPipeline:
                 for m in messages:
                     chat_history += f"{m['role']}: {m['content']}\n"
 
-                query_language = detect_language(messages[-1]["content"])
+                last_user_query = messages[-1]["content"]
+                query_language = detect_language(last_user_query)
 
                 model_kwargs = {
                     "max_completion_tokens": self.max_contextualized_query_len,
-                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    # "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
                 }
                 prompt = QUERY_CONTEXTUALIZER_PROMPT.format(
                     query_language=query_language,
-                    current_date=datetime.now().strftime("%Y-%m-%d"),
+                    current_date=datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S"),
                 )
 
-                messages = [
-                    {
-                        "role": "system",
-                        "content": prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Here is the chat history: \n{chat_history}\n",
-                    },
+                llm_messages = [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Here is the chat history: \n{chat_history}\n"},
                 ]
 
-                # generate queries based on the chat history
-                output: SearchQueries = await self.query_generator.bind(**model_kwargs).ainvoke(messages)
-                return output
+                # Retry once on schema-validation failure; fall back to the raw user query on the second failure.
+                generator = self.query_generator.bind(**model_kwargs)
+                for attempt in (1, 2):
+                    try:
+                        return await generator.ainvoke(llm_messages)
+                    except (ValidationError, OutputParserException) as exc:
+                        if attempt == 1:
+                            logger.warning("Query generation schema error — retrying", error=str(exc))
+                        else:
+                            logger.warning(
+                                "Query generation failed twice — falling back to raw user query",
+                                error=str(exc),
+                            )
+                return SearchQueries(query_list=[Query(query=last_user_query)])
 
     async def _prepare_for_chat_completion(self, partition: list[str] | None, payload: dict):
         messages = payload["messages"]
@@ -234,7 +327,7 @@ class RagPipeline:
                 )
                 for q in queries.query_list
             ]
-            web_tasks = [self.web_search_service.search(q) for q in queries.query_list]
+            web_tasks = [self.web_search_service.search(q.query) for q in queries.query_list]
             all_results = await asyncio.gather(*rag_tasks, *web_tasks)
             n = len(queries.query_list)
             raw_doc_lists = list(all_results[:n])
@@ -257,7 +350,7 @@ class RagPipeline:
         else:
             # Web-only mode (partition is None): no RAG retrieval.
             # Run one web search per sub-query concurrently and deduplicate by URL.
-            raw_web_lists = await asyncio.gather(*[self.web_search_service.search(q) for q in queries.query_list])
+            raw_web_lists = await asyncio.gather(*[self.web_search_service.search(q.query) for q in queries.query_list])
             seen_urls = set()
             web_results = []
             for result in (r for web_list in raw_web_lists for r in web_list):
@@ -271,7 +364,7 @@ class RagPipeline:
             return payload, [], []
 
         if use_map_reduce and docs:
-            docs = await self.map_reduce.map(query=" ".join(queries.query_list), chunks=docs)
+            docs = await self.map_reduce.map(query=" ".join(q.query for q in queries.query_list), chunks=docs)
 
         # 3. Format web results first to know actual token usage, then allocate remaining budget to RAG
         web_formatted = ""
@@ -310,7 +403,9 @@ class RagPipeline:
             0,
             {
                 "role": "system",
-                "content": prompt.format(context=context),
+                "content": prompt.format(
+                    context=context, current_date=datetime.now().strftime("%A, %B %d, %Y, %H:%M:%S")
+                ),
             },
         )
         payload["messages"] = messages

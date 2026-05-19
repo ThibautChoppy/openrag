@@ -128,6 +128,32 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # --- Bypass list (docs, health, /auth/* callbacks, chainlit).
         path = request.url.path
         if is_bypass_path(path):
+            # Special case: browser HTML page-loads on /chainlit/* without an
+            # active session can't be served usefully — Chainlit configures no
+            # in-app auth provider when headerAuth is used, so the SPA shows
+            # a dead-end "Login to access the app" screen with no actionable
+            # button. Redirect those to /auth/login so the OIDC flow takes
+            # over. API/asset/WebSocket requests (Accept != text/html) keep
+            # the bypass so Chainlit's own headerAuth callback can validate.
+            if (
+                auth_mode == "oidc"
+                and path.startswith("/chainlit")
+                and "text/html" in request.headers.get("accept", "").lower()
+                and not request.headers.get("authorization", "").lower().startswith("bearer ")
+            ):
+                cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+                session_valid = False
+                if cookie_token:
+                    session = await vectordb.get_oidc_session_by_token.remote(cookie_token)
+                    session_valid = session is not None
+                if not session_valid:
+                    next_path = path
+                    if request.url.query:
+                        next_path = f"{path}?{request.url.query}"
+                    return RedirectResponse(
+                        url=f"/auth/login?next={quote(next_path, safe='')}",
+                        status_code=302,
+                    )
             return await call_next(request)
 
         user = None

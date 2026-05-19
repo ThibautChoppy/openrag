@@ -84,6 +84,7 @@ class AppState:
 AUTH_TOKEN: str | None = os.getenv("AUTH_TOKEN")
 INDEXERUI_PORT: str | None = os.getenv("INDEXERUI_PORT", "3042")
 INDEXERUI_URL: str | None = os.getenv("INDEXERUI_URL", f"http://localhost:{INDEXERUI_PORT}")
+CORS_EXTRA_ORIGINS: list[str] = [o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(";") if o.strip()]
 WITH_CHAINLIT_UI: bool = os.getenv("WITH_CHAINLIT_UI", "true").lower() == "true"
 WITH_OPENAI_API: bool = os.getenv("WITH_OPENAI_API", "true").lower() == "true"
 
@@ -237,10 +238,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 # Add CORS middleware
+
+
 allow_origins = [
     "http://localhost:3042",
     "http://localhost:5173",
     INDEXERUI_URL,
+    *CORS_EXTRA_ORIGINS,
 ]
 
 app.add_middleware(
