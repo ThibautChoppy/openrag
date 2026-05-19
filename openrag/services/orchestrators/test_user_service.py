@@ -55,8 +55,36 @@ class FakeUserRepo:
         return self._users.get(user_id)
 
 
-def _svc(repo: FakeUserRepo, *, default_quota: int = 10) -> UserService:
-    return UserService(user_repo=repo, auth_service=object(), default_file_quota=default_quota)
+class FakePartitionService:
+    def __init__(self):
+        self.deleted: list[str] = []
+
+    async def delete_partition(self, partition: str) -> None:
+        self.deleted.append(partition)
+
+
+class FakeMembershipRepo:
+    def __init__(self, owned: dict[int, list[dict]] | None = None):
+        self._owned = owned or {}
+
+    async def list_user_partitions_dict(self, user_id: int) -> list[dict]:
+        return self._owned.get(user_id, [])
+
+
+def _svc(
+    repo: FakeUserRepo,
+    *,
+    default_quota: int = 10,
+    partition_service: FakePartitionService | None = None,
+    membership_repo: FakeMembershipRepo | None = None,
+) -> UserService:
+    return UserService(
+        user_repo=repo,
+        auth_service=object(),
+        default_file_quota=default_quota,
+        partition_service=partition_service or FakePartitionService(),
+        membership_repo=membership_repo or FakeMembershipRepo(),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -137,10 +165,29 @@ async def test_delete_user_missing_raises_and_no_repo_call():
 
 
 @pytest.mark.asyncio
-async def test_delete_user_existing_deletes_without_cascade():
+async def test_delete_user_existing_no_owned_partitions():
     repo = FakeUserRepo(existing={5})
-    await _svc(repo).delete_user(5)
-    assert repo.deleted == [5]  # no partition cascade in 8A.2 (deferred to 8B)
+    ps = FakePartitionService()
+    await _svc(repo, partition_service=ps).delete_user(5)
+    assert repo.deleted == [5]
+    assert ps.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_delete_user_cascades_owned_partitions_first():
+    repo = FakeUserRepo(existing={5})
+    ps = FakePartitionService()
+    mem = FakeMembershipRepo(
+        {
+            5: [
+                {"partition": "p_owned", "role": "owner"},
+                {"partition": "p_viewer", "role": "viewer"},  # not cascaded
+            ]
+        }
+    )
+    await _svc(repo, partition_service=ps, membership_repo=mem).delete_user(5)
+    assert ps.deleted == ["p_owned"]  # only owner-role partitions
+    assert repo.deleted == [5]
 
 
 @pytest.mark.asyncio

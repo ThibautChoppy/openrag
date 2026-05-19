@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.user_service import UserService
 
 
@@ -101,6 +102,7 @@ class ServiceContainer:
         self._vector_store: VectorStore | None = create_vector_store(settings) if settings is not None else None
         self._auth_service: AuthService | None = None
         self._user_service: UserService | None = None
+        self._partition_service: PartitionService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -249,8 +251,26 @@ class ServiceContainer:
                 user_repo=self.user_repo,
                 auth_service=self.auth_service,
                 default_file_quota=self._settings.rdb.default_file_quota,
+                partition_service=self.partition_service,
+                membership_repo=self.membership_repo,
             )
         return self._user_service
+
+    @property
+    def partition_service(self) -> PartitionService:
+        """PartitionService — lazily built, cached for the container's lifetime."""
+        if self._partition_service is None:
+            from services.orchestrators.partition_service import PartitionService
+
+            self._partition_service = PartitionService(
+                partition_repo=self.partition_repo,
+                membership_repo=self.membership_repo,
+                document_repo=self.document_repo,
+                vector_store=self.vector_store,
+                user_repo=self.user_repo,
+                collection=self._settings.vectordb.collection_name,
+            )
+        return self._partition_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request, status
 if TYPE_CHECKING:
     from di.container import ServiceContainer
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.partition_service import PartitionService
     from services.orchestrators.user_service import UserService
 
 
@@ -37,3 +38,7 @@ def get_auth_service(request: Request) -> AuthService:
 
 def get_user_service(request: Request) -> UserService:
     return get_container(request).user_service
+
+
+def get_partition_service(request: Request) -> PartitionService:
+    return get_container(request).partition_service

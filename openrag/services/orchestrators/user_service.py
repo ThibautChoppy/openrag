@@ -12,11 +12,11 @@ Response shape is kept identical to the legacy endpoints — the repo's
 contract the Ray actor used to expose, so existing clients are
 unaffected.
 
-Known temporary gap (deferred to Phase 8B / PartitionService): the
-legacy Ray ``delete_user`` cascade-deleted every partition the user
-owned (Milvus + Postgres) before removing the row. PartitionService owns
-that cross-cutting delete, so :meth:`delete_user` here is a plain repo
-delete; owner-partition cleanup is reintroduced in 8B.
+Owner-partition cascade (restored in Phase 8B): the legacy Ray
+``delete_user`` deleted every partition the user owned (Milvus +
+Postgres) before removing the row. That cross-cutting delete is owned by
+PartitionService; :meth:`delete_user` composes it so the behaviour
+matches the legacy endpoint again.
 """
 
 from __future__ import annotations
@@ -28,9 +28,11 @@ from core.utils.exceptions import UserNotFoundError, ValidationError
 from utils.logger import get_logger
 
 if TYPE_CHECKING:
+    from core.ports.partition_membership_repo import PartitionMembershipRepository
     from core.ports.user_repo import UserRepository
     from models.user import UserCreate, UserUpdate
     from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.partition_service import PartitionService
 
 logger = get_logger()
 
@@ -49,6 +51,8 @@ class UserService:
         user_repo: UserRepository,
         auth_service: AuthService,
         default_file_quota: int,
+        partition_service: PartitionService,
+        membership_repo: PartitionMembershipRepository,
     ) -> None:
         self._user_repo = user_repo
         # Injected per the Phase 8 prescribed signature: the place future
@@ -59,6 +63,12 @@ class UserService:
         # Only applied as a creation default when > 0, matching the old
         # ``vectordb.create_user`` behaviour.
         self._default_file_quota = default_file_quota
+        # 8B: reinstating the owner-partition cascade dropped in 8A.2.
+        # delete_user must also delete every partition the user owns
+        # (Milvus + Postgres) — that cross-cutting delete is owned by
+        # PartitionService, so UserService composes it.
+        self._partition_service = partition_service
+        self._membership_repo = membership_repo
 
     # ------------------------------------------------------------------
     # Validation
@@ -115,14 +125,22 @@ class UserService:
         return user
 
     async def delete_user(self, user_id: int) -> None:
-        """Delete a user row.
+        """Delete a user, cascading partitions the user owns first.
 
-        Owner-partition cascade is intentionally NOT performed here — see
-        the module docstring (deferred to PartitionService, 8B).
+        Mirrors the legacy Ray ``delete_user``: every partition where the
+        user holds the ``owner`` role is deleted (vectors + relational
+        rows, via PartitionService) before the user row is removed.
         """
         await self._ensure_exists(user_id)
+        owned = [
+            p["partition"]
+            for p in await self._membership_repo.list_user_partitions_dict(user_id)
+            if p.get("role") == "owner"
+        ]
+        for partition in owned:
+            await self._partition_service.delete_partition(partition)
         await self._user_repo.delete_user(user_id)
-        logger.info("Deleted user", user_id=user_id)
+        logger.info("Deleted user", user_id=user_id, cascaded_partitions=len(owned))
 
     async def regenerate_token(self, user_id: int) -> dict:
         await self._ensure_exists(user_id)
