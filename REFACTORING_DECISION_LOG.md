@@ -1269,6 +1269,24 @@ request.
   explicit 8H exception; JobService is the documented hook point for the
   post-refactor DB-backed job tracking (Phase 9).
 
+**11. 8D.1 reuses `components.indexer.utils.files.extract_temporal_fields`
+as-is, carrying a transitive module-level `load_config()` and an
+`HTTPException`.** IndexingService imports that helper for ISO-8601
+metadata parsing. Its module body runs `config = load_config()` at
+import time, and the helper raises FastAPI `HTTPException` on a bad
+datetime — a transport type leaking into a service.
+- Why: it is a pure parsing helper under the shim-exempt `components`
+  layer (8H greps the orchestrator file itself, which stays clean), and
+  reusing it verbatim keeps the bad-datetime 400 response byte-identical
+  with the legacy router. Rewriting it now would risk behavioural drift
+  for no Phase-8 benefit.
+- Alternative: reimplement the parse in `core/` raising `ValidationError`
+  and map it in the router. Rejected for Phase 8 (byte-identical bodies
+  are the priority); it is the right move once the shim is gone.
+- **Flag for Phase 9:** when `indexer_ray_shim.py` is deleted, move the
+  temporal-field parsing into core (raise `ValidationError`, drop the
+  module-level `load_config` and the `HTTPException`).
+
 ---
 ## Template for future entries
 
