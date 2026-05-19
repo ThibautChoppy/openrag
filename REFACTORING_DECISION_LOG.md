@@ -1201,6 +1201,38 @@ the `RetrievalSearcher` port during the Phase-8 shim.**
   document_repo, config)` — with the shim searcher those are unused;
   it takes the built `searcher` / `reranker` / `llm` + `config`.
 
+**7. 8C.2 structured output: core LLM + JSON-mode prompt + parse (no
+LangChain).** `RagPipeline.generate_query` and `map_reduce` used a
+LangChain structured-output chain for `SearchQueries` / `SummarizedChunk`.
+QueryService instead calls the injected core `LLM.chat` with a
+JSON-instructed prompt + `response_format={"type":"json_object"}` and
+`json.loads` (+ `_json_slice` brace-extraction) into the Pydantic model,
+preserving the legacy fallbacks (query-gen: retry once → raw user query;
+map-reduce: relevancy=False on any parse error).
+- Why: 8H bans LangChain in orchestrators; the plan's explicit "remove
+  ChatOpenAI — use LLM factory" intent.
+- Alternative: wrap the LangChain chain behind a core-LLM-shaped helper
+  outside orchestrators. Rejected — only partially meets the intent and
+  keeps a LangChain dependency on the hot path.
+
+**8. 8C.2 streaming + citations live in QueryService; the router is pure
+transport.** `chat_stream` drives the proven
+`components.utils.stream_with_source_filtering` (reused verbatim — the
+100-char buffer that strips `[Sources: N]` mid-stream is delicate);
+`chat`/`complete` return the finalized OpenAI dict with the
+citation-filtered `extra`. The router maps partition, wraps
+`StreamingResponse`/`JSONResponse`, and passes a request-bound
+`prepare_sources` callable so `request.url_for` stays in transport.
+- Why: the plan's "service owns streaming" Q&A; keeps the proven SSE
+  buffer logic intact (no rewrite) while ownership moves to the service.
+- Constructor takes `workspace_service` beyond the plan's four (the
+  legacy `_prepare_for_chat_completion` validated the workspace via the
+  Ray actor; reusing WorkspaceService.get_workspace keeps it Ray-free).
+- Consequence: legacy `components/pipeline.py` (RagPipeline /
+  RetrieverPipeline) + `map_reduce.py` + `components/retriever.py` are
+  now dead code (no router imports `RagPipeline`); **flag for Phase 12
+  cleanup** to delete them with the other shims.
+
 ---
 ## Template for future entries
 

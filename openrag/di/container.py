@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from core.vector_stores import VectorStore
     from services.orchestrators.auth_service import AuthService
     from services.orchestrators.partition_service import PartitionService
+    from services.orchestrators.query_service import QueryService
     from services.orchestrators.retrieval_service import RetrievalService
     from services.orchestrators.user_service import UserService
     from services.orchestrators.workspace_service import WorkspaceService
@@ -107,6 +108,7 @@ class ServiceContainer:
         self._partition_service: PartitionService | None = None
         self._workspace_service: WorkspaceService | None = None
         self._retrieval_service: RetrievalService | None = None
+        self._query_service: QueryService | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -328,6 +330,36 @@ class ServiceContainer:
                 config=self._settings,
             )
         return self._retrieval_service
+
+    @property
+    def query_service(self) -> QueryService:
+        """QueryService — lazily built, cached for the container's lifetime.
+
+        Shares the same core LLM construction as ``retrieval_service``
+        (built from ``settings.llm``); the web-search service comes from
+        the legacy ``WebSearchFactory`` (provider is ``None`` when
+        ``WEBSEARCH_API_TOKEN`` is unset — web search silently disabled).
+        """
+        if self._query_service is None:
+            from components.websearch import WebSearchFactory
+            from services.orchestrators.query_service import QueryService
+
+            llm_cfg = self._settings.llm.model_dump()
+            llm = self.create_llm(
+                "vllm",
+                endpoint=llm_cfg["base_url"],
+                model_name=llm_cfg["model"],
+                api_key=llm_cfg.get("api_key", ""),
+                **{k: v for k, v in llm_cfg.items() if k not in ("base_url", "model", "api_key")},
+            )
+            self._query_service = QueryService(
+                retrieval_service=self.retrieval_service,
+                llm=llm,
+                config=self._settings,
+                web_search_service=WebSearchFactory.create_service(self._settings),
+                workspace_service=self.workspace_service,
+            )
+        return self._query_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)
