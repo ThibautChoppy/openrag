@@ -57,6 +57,7 @@ class IndexerWorker:
                 "language": metadata.get("language", "en"),
                 "replace": replace,
                 "user": user,
+                "workspace_ids": workspace_ids,
             }
             await self._pipeline.run(row)
             await self._tsm.set_state.remote(task_id, "COMPLETED")

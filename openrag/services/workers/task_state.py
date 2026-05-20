@@ -12,7 +12,12 @@ try:
     _cfg = _load_config()
     _POOL_SIZE: int = _cfg.ray.pool_size
     _MAX_TASKS_PER_WORKER: int = _cfg.ray.max_tasks_per_worker
-except Exception:
+except (ImportError, AttributeError) as _cfg_err:
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning(
+        "Could not load ray config for TaskStateManager pool info: %s — using defaults", _cfg_err
+    )
     _POOL_SIZE = 1
     _MAX_TASKS_PER_WORKER = 1
 
