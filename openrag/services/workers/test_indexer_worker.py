@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -72,13 +71,6 @@ def _make_pipeline(processed: ProcessedDocument, chunks: list[Chunk]) -> Any:
         embedder=FakeEmbedder(),
         vector_store=FakeVectorStore(),
     )
-
-
-def _write_tmp_file(content: bytes = b"hello world") -> str:
-    tmp = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
-    tmp.write(content)
-    tmp.close()
-    return tmp.name
 
 
 # ---------------------------------------------------------------------------

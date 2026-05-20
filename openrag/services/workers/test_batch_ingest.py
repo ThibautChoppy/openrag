@@ -210,6 +210,20 @@ async def test_ingest_batch_empty_input_returns_empty_list():
     assert result == []
 
 
+@pytest.mark.asyncio
+async def test_ingest_batch_concurrency_zero_raises():
+    pipeline, _ = _make_pipeline(_make_doc())
+    with pytest.raises(ValueError, match="concurrency must be >= 1"):
+        await ingest_batch(pipeline, [], concurrency=0)
+
+
+@pytest.mark.asyncio
+async def test_ingest_batch_concurrency_negative_raises():
+    pipeline, _ = _make_pipeline(_make_doc())
+    with pytest.raises(ValueError, match="concurrency must be >= 1"):
+        await ingest_batch(pipeline, [], concurrency=-1)
+
+
 # ---------------------------------------------------------------------------
 # Tests — aggregate_batch_results
 # ---------------------------------------------------------------------------

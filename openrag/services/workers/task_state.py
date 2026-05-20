@@ -81,7 +81,7 @@ class TaskStateManager:
             self.user_index.setdefault(user_id, set()).add(task_id)
 
     @ray.method(concurrency_group="set")
-    async def set_object_ref(self, task_id: str, object_ref: dict) -> None:
+    async def set_object_ref(self, task_id: str, object_ref: ray.ObjectRef) -> None:
         async with self.lock:
             info = await self._ensure_task(task_id)
             info.object_ref = object_ref
@@ -105,13 +105,13 @@ class TaskStateManager:
             return info.details if info else None
 
     @ray.method(concurrency_group="get")
-    async def get_object_ref(self, task_id: str) -> dict | None:
+    async def get_object_ref(self, task_id: str) -> ray.ObjectRef | None:
         async with self.lock:
             info = self.tasks.get(task_id)
             return info.object_ref if info else None
 
     @ray.method(concurrency_group="queue_info")
-    async def get_all_states(self) -> dict[str, str]:
+    async def get_all_states(self) -> dict[str, str | None]:
         async with self.lock:
             return {tid: info.state for tid, info in self.tasks.items()}
 
@@ -154,11 +154,7 @@ class TaskStateManager:
         async with self.lock:
             task_ids = self.user_index.get(user_id, set())
             pending_states = {"QUEUED", "SERIALIZING", "CHUNKING", "INSERTING"}
-            return sum(
-                1
-                for tid in task_ids
-                if (info := self.tasks.get(tid)) and info.state in pending_states
-            )
+            return sum(1 for tid in task_ids if (info := self.tasks.get(tid)) and info.state in pending_states)
 
 
 __all__ = ["TaskInfo", "TaskStateManager"]

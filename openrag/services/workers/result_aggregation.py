@@ -47,7 +47,10 @@ def aggregate_batch_results(
         stage = row.get("stage", "")
         if stage == _SUCCESS_STAGE:
             succeeded += 1
-            stored_count += int(row.get("stored_count", 0))
+            try:
+                stored_count += int(row.get("stored_count", 0))
+            except (TypeError, ValueError):
+                pass
         else:
             failures.append(
                 RowFailure(
