@@ -18,16 +18,16 @@ async def caption_stage(
 ) -> MutableMapping[str, Any]:
     """Caption images in ``row["processed_document"]`` and mutate the row."""
 
-    processed_document = row.get("processed_document")
-    if not isinstance(processed_document, ProcessedDocument):
-        raise ValueError("caption_stage row must contain a ProcessedDocument under 'processed_document'")
-
-    prompt = row.get("caption_prompt")
-    if prompt is not None:
-        prompt = str(prompt)
-
-    effective_timeout = stage_timeout(timeout, len(processed_document.images), per_item_timeout=per_image_timeout)
     try:
+        processed_document = row.get("processed_document")
+        if not isinstance(processed_document, ProcessedDocument):
+            raise ValueError("caption_stage row must contain a ProcessedDocument under 'processed_document'")
+
+        prompt = row.get("caption_prompt")
+        if prompt is not None:
+            prompt = str(prompt)
+
+        effective_timeout = stage_timeout(timeout, len(processed_document.images), per_item_timeout=per_image_timeout)
         row["processed_document"] = await run_with_optional_timeout(
             lambda: _caption_document(processed_document, vlm, prompt),
             effective_timeout,
@@ -48,6 +48,7 @@ async def _caption_document(
     vlm: VLM,
     prompt: str | None,
 ) -> ProcessedDocument:
+    """Return a copy of ``processed_document`` with captions materialized."""
     text_blocks = list(processed_document.text_blocks)
     captioned_images: list[ImageBlock] = []
 
@@ -68,6 +69,7 @@ async def _caption_document(
 
 
 def _replace_markdown_ref(text_blocks: list[TextBlock], image: ImageBlock, wrapped_caption: str) -> bool:
+    """Replace an image markdown placeholder in text blocks when one exists."""
     markdown_ref = image.metadata.get("markdown_ref")
     if not markdown_ref:
         return False

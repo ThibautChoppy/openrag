@@ -16,11 +16,11 @@ async def parse_stage(
 ) -> MutableMapping[str, Any]:
     """Parse ``row["document"]`` and mutate the row with the stage result."""
 
-    document = row.get("document")
-    if not isinstance(document, Document):
-        raise ValueError("parse_stage row must contain a Document under 'document'")
-
     try:
+        document = row.get("document")
+        if not isinstance(document, Document):
+            raise ValueError("parse_stage row must contain a Document under 'document'")
+
         processed = await _parse_with_timeout(parser, document, timeout)
         row["processed_document"] = processed
         row["stage"] = "parsed"

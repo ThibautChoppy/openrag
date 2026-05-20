@@ -18,12 +18,12 @@ async def chunk_stage(
 ) -> MutableMapping[str, Any]:
     """Chunk ``row["processed_document"]`` and mutate the row with chunks."""
 
-    processed_document = row.get("processed_document")
-    if not isinstance(processed_document, ProcessedDocument):
-        raise ValueError("chunk_stage row must contain a ProcessedDocument under 'processed_document'")
-
-    partition = str(row.get("partition") or "default")
     try:
+        processed_document = row.get("processed_document")
+        if not isinstance(processed_document, ProcessedDocument):
+            raise ValueError("chunk_stage row must contain a ProcessedDocument under 'processed_document'")
+
+        partition = str(row.get("partition") or "default")
         chunks = await _chunk_with_timeout(chunker, processed_document, partition, timeout)
         row["chunks"] = chunks
         row["stage"] = "chunked"
@@ -43,6 +43,8 @@ async def _chunk_with_timeout(
     partition: str,
     timeout: float | None,
 ) -> list[Chunk]:
+    """Run the synchronous chunker without blocking the event loop."""
+
     async def run() -> list[Chunk]:
         return await asyncio.to_thread(chunker.chunk, processed_document, partition)
 

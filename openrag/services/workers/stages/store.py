@@ -17,13 +17,13 @@ async def store_stage(
 ) -> MutableMapping[str, Any]:
     """Upsert ``row["chunks"]`` into the partition collection."""
 
-    chunks = row.get("chunks")
-    if not _is_chunk_list(chunks):
-        raise ValueError("store_stage row must contain a list[Chunk] under 'chunks'")
-
-    collection = str(row.get("partition") or "default")
-    effective_timeout = stage_timeout(timeout, len(chunks), per_item_timeout=per_chunk_timeout)
     try:
+        chunks = row.get("chunks")
+        if not _is_chunk_list(chunks):
+            raise ValueError("store_stage row must contain a list[Chunk] under 'chunks'")
+
+        collection = str(row.get("partition") or "default")
+        effective_timeout = stage_timeout(timeout, len(chunks), per_item_timeout=per_chunk_timeout)
         row["stored_count"] = await run_with_optional_timeout(
             lambda: vector_store.upsert(chunks, collection=collection),
             effective_timeout,
@@ -40,4 +40,5 @@ async def store_stage(
 
 
 def _is_chunk_list(value: Any) -> bool:
+    """Return whether ``value`` is a concrete list of domain chunks."""
     return isinstance(value, list) and all(isinstance(chunk, Chunk) for chunk in value)

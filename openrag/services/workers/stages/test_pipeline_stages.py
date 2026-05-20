@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from core.chunking.chunking_strategy import ChunkingStrategy
 from core.embeddings.embedder import Embedder
@@ -88,7 +90,9 @@ class FakeVectorStore(VectorStore):
             raise self.error
         return self.count
 
-    async def search(self, embedding, query_text=None, top_k=10, collection="default", filters=None, similarity_threshold=None):
+    async def search(
+        self, embedding, query_text=None, top_k=10, collection="default", filters=None, similarity_threshold=None
+    ):
         return []
 
     async def delete(self, ids: list[str], collection: str = "default") -> int:
@@ -226,3 +230,55 @@ async def test_caption_stage_marks_error_and_scrubs_credentials_on_failure():
     assert row["stage"] == "caption_failed"
     assert row["error"] == "caption failed"
     assert "api_key" not in row
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stage_fn", "dependency", "expected_stage", "expected_error"),
+    [
+        (
+            caption_stage,
+            FakeVLM(["unused"]),
+            "caption_failed",
+            "caption_stage row must contain a ProcessedDocument under 'processed_document'",
+        ),
+        (
+            chunk_stage,
+            FakeChunker([]),
+            "chunk_failed",
+            "chunk_stage row must contain a ProcessedDocument under 'processed_document'",
+        ),
+        (
+            contextualize_stage,
+            FakeContextualizer([]),
+            "contextualize_failed",
+            "contextualize_stage row must contain a list[Chunk] under 'chunks'",
+        ),
+        (
+            embed_stage,
+            FakeEmbedder([]),
+            "embed_failed",
+            "embed_stage row must contain a list[Chunk] under 'chunks'",
+        ),
+        (
+            store_stage,
+            FakeVectorStore(count=0),
+            "store_failed",
+            "store_stage row must contain a list[Chunk] under 'chunks'",
+        ),
+    ],
+)
+async def test_stages_mark_error_and_scrub_credentials_on_invalid_input(
+    stage_fn,
+    dependency,
+    expected_stage: str,
+    expected_error: str,
+):
+    row = {"token": "secret"}
+
+    with pytest.raises(ValueError, match=re.escape(expected_error)):
+        await stage_fn(row, dependency)
+
+    assert row["stage"] == expected_stage
+    assert row["error"] == expected_error
+    assert "token" not in row

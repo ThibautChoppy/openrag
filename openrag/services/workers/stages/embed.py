@@ -17,12 +17,12 @@ async def embed_stage(
 ) -> MutableMapping[str, Any]:
     """Embed ``row["chunks"]`` and replace them with embedded copies."""
 
-    chunks = row.get("chunks")
-    if not _is_chunk_list(chunks):
-        raise ValueError("embed_stage row must contain a list[Chunk] under 'chunks'")
-
-    effective_timeout = stage_timeout(timeout, len(chunks), per_item_timeout=per_chunk_timeout)
     try:
+        chunks = row.get("chunks")
+        if not _is_chunk_list(chunks):
+            raise ValueError("embed_stage row must contain a list[Chunk] under 'chunks'")
+
+        effective_timeout = stage_timeout(timeout, len(chunks), per_item_timeout=per_chunk_timeout)
         texts = [chunk.text for chunk in chunks]
         vectors = await run_with_optional_timeout(lambda: embedder.embed(texts), effective_timeout)
         if len(vectors) != len(chunks):
@@ -40,4 +40,5 @@ async def embed_stage(
 
 
 def _is_chunk_list(value: Any) -> bool:
+    """Return whether ``value`` is a concrete list of domain chunks."""
     return isinstance(value, list) and all(isinstance(chunk, Chunk) for chunk in value)

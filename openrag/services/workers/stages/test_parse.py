@@ -63,7 +63,11 @@ async def test_parse_stage_marks_error_and_scrubs_credentials_when_parser_fails(
 
 @pytest.mark.asyncio
 async def test_parse_stage_requires_document_in_row():
-    row = {}
+    row = {"api_key": "secret"}
 
     with pytest.raises(ValueError, match="document"):
         await parse_stage(row, FakeParser())
+
+    assert row["stage"] == "parse_failed"
+    assert row["error"] == "parse_stage row must contain a Document under 'document'"
+    assert "api_key" not in row
