@@ -1,13 +1,24 @@
+"""Tools routes — thin HTTP layer over :class:`ConversionService`.
+
+Phase 8E: the ``extractText`` serialization moved to
+``services.orchestrators.conversion_service.ConversionService`` (the Ray
+``DocSerializer`` actor now sits behind the ``FileSerializer`` port).
+This module keeps HTTP transport only: the saved-file IO + cleanup,
+tool validation/dispatch, and the 4xx/5xx error mapping whose exact
+``{"detail": ...}`` body the legacy endpoint returned via
+``HTTPException``.
+"""
+
 import json
 from pathlib import Path
 
-import ray
-from components.indexer.utils.files import save_file_to_disk, serialize_file
-from components.indexer.utils.text_sanitizer import sanitize_extracted_text
+from components.indexer.utils.files import save_file_to_disk
 from config import load_config
+from di.providers import get_conversion_service
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from services.orchestrators.conversion_service import ConversionService
 from utils.logger import get_logger
 
 from .utils import (
@@ -92,22 +103,20 @@ async def execute_tool(
     file: UploadFile = Depends(validate_file_format),
     tool: str = Depends(validate_tool),
     metadata: dict = Depends(validate_metadata),
+    service: ConversionService = Depends(get_conversion_service),
 ):
-    save_dir = Path(data_dir)
     file_path = None
     try:
         if tool["name"] == "extractText":
-            file_path = await save_file_to_disk(file, save_dir, with_random_prefix=True)
-            metadata.update({"source": str(file_path), "filename": file.filename})
+            file_path = await save_file_to_disk(file, Path(data_dir), with_random_prefix=True)
 
-            task_id = ray.get_runtime_context().get_task_id()
-
-            logger.debug(f"Execute tool extractText for task {task_id} with file {file.filename}")
-            doc = await serialize_file(task_id, path=file_path, metadata=metadata)
-            logger.debug(f"extractText done for task {task_id}")
-
-            # Sanitize the extracted text to remove useless characters and improve quality
-            sanitized_content = sanitize_extracted_text(doc.page_content)
+            logger.debug(f"Execute tool extractText with file {file.filename}")
+            sanitized_content = await service.serialize_file(
+                file_path=str(file_path),
+                filename=file.filename,
+                metadata=metadata,
+            )
+            logger.debug("extractText done")
 
             return JSONResponse(
                 status_code=status.HTTP_200_OK,

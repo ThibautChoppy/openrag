@@ -1139,6 +1139,266 @@ between the vector-store and catalog-store bootstrap steps.
   `partitions_for_collection_<name>` derivation (see Phase 7E entry 2).
 
 ---
+## Phase 8 — Orchestrators (2026-05-19)
+
+**1. Provider sourcing: routers read `request.app.state.container`.**
+- Why: the 8 Phase-8 doc shows providers as one-line accessors; the
+  ServiceContainer is not attached to the live app until Phase 11. We
+  attach it best-effort in `main.py` now (not `initialize()`d), so the
+  thinned routers resolve services but the DB-backed flows stay dormant
+  until Phase 11. Token-mode auth routes already 400 before any service.
+- Alternative considered: a lazy module-level container singleton in
+  `di/providers.py` (mirrors `components/auth/deps.py`). Rejected — the
+  one-liner/app.state shape matches the doc and Phase-11 cutover.
+
+**2. OIDCConfig built from env in the container, not wired into Settings.**
+- Why: keeps 8A.1 scoped; `OIDCConfig` exists but is not in root
+  `Settings`. Added a missing `auto_provision_login` field.
+- Alternative: wire it into `Settings` now — deferred (config refactor).
+
+**3. Thin routers: typed core exceptions propagate to the global
+`OpenRAGError` handler; `HTTPException` kept only where the legacy body
+must stay byte-identical** (id==1 / 409-exists / file|workspace 404s).
+- Why: the legacy `_check_*` guards already surfaced 404s via the global
+  handler, so propagating `UserNotFoundError`/`PartitionNotFoundError`/
+  `ValidationError` reproduces them; only the non-bracketed
+  `{"detail": ...}` `HTTPException` bodies need to stay verbatim.
+
+**4. Constructor extensions over the plan's prescribed signatures.**
+- Why: to preserve legacy behaviour without reaching into Ray/config,
+  orchestrators take extra container-supplied args: `collection`
+  (`settings.vectordb.collection_name` — Partition/Workspace/Retrieval),
+  `user_repo` (PartitionService, to reproduce `VDBUserNotFound`),
+  `default_file_quota` (UserService), and orchestrator→orchestrator
+  injection (UserService←PartitionService for the delete-user cascade).
+- Alternative: hold the plan signatures exactly — rejected, would drop
+  behaviour (cascade) or smuggle config/Ray into the service.
+
+**5. 8A.2 delete-user owner-partition cascade deferred, then restored in
+8B.1.** UserService.delete_user was a plain repo delete in 8A.2 (gap
+logged); 8B.1 composes PartitionService so it deletes owned partitions
+(vectors + rows) first, matching the legacy Ray `delete_user`.
+
+**6. 8C searcher backing: inject the Ray-backed `MilvusRayShim` behind
+the `RetrievalSearcher` port during the Phase-8 shim.**
+- Why: the only `RetrievalSearcher` impl is `MilvusRayShim` (Ray
+  `Vectordb` actor — embeds + hybrid-searches internally). The 8C plan
+  text says "retriever calls `vector_store.search()` directly (no Ray)",
+  but the dev-workflow doc puts Ray cleanup in Phase 9 and allows
+  orchestrators to call Ray *behind a port* during the shim. Injecting
+  the shim keeps the orchestrator file Ray-free (8H satisfied: no
+  Ray remote-call, no Ray import — Ray is behind the port) and avoids a
+  risky reimplementation of hybrid-search / surrounding-chunks /
+  similarity behaviour in the hot search path.
+- Alternative considered: write a new `VectorStoreSearcher` on the clean
+  `VectorStore` port now (embed via Embedder factory + `search`).
+  Rejected for this phase — real regression surface in core search; the
+  clean adapter lands in Phase 9 when the shim is deleted. **Flag for
+  Phase 9:** add `VectorStoreSearcher`, swap the container wiring, delete
+  `MilvusRayShim`.
+- Consequence: `RetrievalService.__init__` deviates from the plan's
+  `(vector_store, embedder_factory, reranker_factory, llm_factory,
+  document_repo, config)` — with the shim searcher those are unused;
+  it takes the built `searcher` / `reranker` / `llm` + `config`.
+
+**7. 8C.2 structured output: core LLM + JSON-mode prompt + parse (no
+LangChain).** `RagPipeline.generate_query` and `map_reduce` used a
+LangChain structured-output chain for `SearchQueries` / `SummarizedChunk`.
+QueryService instead calls the injected core `LLM.chat` with a
+JSON-instructed prompt + `response_format={"type":"json_object"}` and
+`json.loads` (+ `_json_slice` brace-extraction) into the Pydantic model,
+preserving the legacy fallbacks (query-gen: retry once → raw user query;
+map-reduce: relevancy=False on any parse error).
+- Why: 8H bans LangChain in orchestrators; the plan's explicit "remove
+  ChatOpenAI — use LLM factory" intent.
+- Alternative: wrap the LangChain chain behind a core-LLM-shaped helper
+  outside orchestrators. Rejected — only partially meets the intent and
+  keeps a LangChain dependency on the hot path.
+
+**8. 8C.2 streaming + citations live in QueryService; the router is pure
+transport.** `chat_stream` drives the proven
+`components.utils.stream_with_source_filtering` (reused verbatim — the
+100-char buffer that strips `[Sources: N]` mid-stream is delicate);
+`chat`/`complete` return the finalized OpenAI dict with the
+citation-filtered `extra`. The router maps partition, wraps
+`StreamingResponse`/`JSONResponse`, and passes a request-bound
+`prepare_sources` callable so `request.url_for` stays in transport.
+- Why: the plan's "service owns streaming" Q&A; keeps the proven SSE
+  buffer logic intact (no rewrite) while ownership moves to the service.
+- Constructor takes `workspace_service` beyond the plan's four (the
+  legacy `_prepare_for_chat_completion` validated the workspace via the
+  Ray actor; reusing WorkspaceService.get_workspace keeps it Ray-free).
+- Consequence: legacy `components/pipeline.py` (RagPipeline /
+  RetrieverPipeline) + `map_reduce.py` + `components/retriever.py` are
+  now dead code (no router imports `RagPipeline`); **flag for Phase 12
+  cleanup** to delete them with the other shims.
+
+**9. 8D.1 indexing dispatch sits behind an `IndexingDispatcher` port +
+Ray shim, not direct Ray calls in the service.** The plan's
+`IndexingService.__init__(document_repo, workspace_repo, vector_store,
+config)` can't reach the `Indexer` / `TaskStateManager` actors. Mirroring
+the proven 8C searcher pattern, a new `core/indexing/dispatcher.py` ABC
+defines the worker operations the service needs and
+`services/storage/indexer_ray_shim.py` adapts the two Ray actors to it;
+the container injects it via `from_ray_namespace()` (lazy, like
+RetrievalService). `vector_store` and `config` are dropped from the ctor
+(the file delete is owned by the Indexer worker; the only config the
+legacy router used — data dir, vectordb timeout — is a transport/shim
+concern); `dispatcher` is the added arg.
+- Why: 8H bans Ray remote calls under `services/orchestrators/` (only
+  JobService is excepted); the established way to keep an orchestrator
+  Ray-free during the shim is a core port + `services/storage/` shim.
+- Alternative: leave the dispatch in the thin router. Rejected — 8G/8D.1
+  explicitly move "inline upload+dispatch → indexing_service.add_file()".
+- File save to disk + the byte-identical `HTTPException` guards (409
+  exists, 404 not-found, 400 bad workspace_ids, 404 unknown workspace,
+  404 no object ref) stay in the router (transport + exact legacy body),
+  matching the workspaces.py thinning style.
+- **Flag for Phase 9:** delete `indexer_ray_shim.py`, have IndexingService
+  call the pipeline stages directly.
+
+**10. 8D.2 JobService keeps Ray `.remote` calls (the one 8H exception).**
+Per the plan ctor `JobService(task_state_manager)` and the 8H carve-out,
+JobService wraps the `TaskStateManager` actor directly — no shim. The
+status rollup and `?task_status=` filtering (business logic) move into
+the service; `request.url_for` link building stays in the thin queue
+router. Container resolves the actor lazily in the cached property
+(deferred `utils.dependencies` import) so it is only needed at first
+request.
+- Why: introducing a shim here would contradict the plan and the
+  explicit 8H exception; JobService is the documented hook point for the
+  post-refactor DB-backed job tracking (Phase 9).
+
+**11. 8D.1 reuses `components.indexer.utils.files.extract_temporal_fields`
+as-is, carrying a transitive module-level `load_config()` and an
+`HTTPException`.** IndexingService imports that helper for ISO-8601
+metadata parsing. Its module body runs `config = load_config()` at
+import time, and the helper raises FastAPI `HTTPException` on a bad
+datetime — a transport type leaking into a service.
+- Why: it is a pure parsing helper under the shim-exempt `components`
+  layer (8H greps the orchestrator file itself, which stays clean), and
+  reusing it verbatim keeps the bad-datetime 400 response byte-identical
+  with the legacy router. Rewriting it now would risk behavioural drift
+  for no Phase-8 benefit.
+- Alternative: reimplement the parse in `core/` raising `ValidationError`
+  and map it in the router. Rejected for Phase 8 (byte-identical bodies
+  are the priority); it is the right move once the shim is gone.
+- **Flag for Phase 9:** when `indexer_ray_shim.py` is deleted, move the
+  temporal-field parsing into core (raise `ValidationError`, drop the
+  module-level `load_config` and the `HTTPException`).
+
+**12. 8E ConversionService — serializer behind a `FileSerializer` port +
+shim; chunk lookup through the clean `VectorStore`.** Same pattern as
+8C/8D.1: new `core/indexing/serializer.py` ABC + `services/storage/
+serializer_ray_shim.py` wrapping the `DocSerializer` actor (it reuses
+the legacy `components...serialize_file` helper so the
+`call_ray_actor_with_timeout` behaviour the tools router relied on is
+preserved). `get_chunk` ports the legacy `get_chunk_by_id` onto
+`VectorStore.query_chunks_by_filter({"_id": int(chunk_id)})` and returns
+a plain `{"page_content", "metadata"}` dict (no LangChain `Document`),
+exactly as PartitionService reads chunks. Ctor deviates from the plan's
+`ConversionService(config=config)` → `(serializer, vector_store,
+collection)` (the `collection` extra is the established
+settings-supplied vector-store name); `config` dropped.
+- Why: the plan ctor is underspecified and the 8C/8D shim+port approach
+  is the established way to keep the orchestrator Ray-free (8H).
+- File save + cleanup IO, tool dispatch, and the byte-identical
+  `HTTPException` bodies (404 not-found, 403 forbidden, the tool-error
+  4xx/5xx mapping) stay in the thin routers.
+- Note: the legacy router's `task_id` came from
+  `ray.get_runtime_context().get_task_id()`; outside a Ray task that is
+  the driver context, so the shim passes a fixed `"tools-extract"`
+  fallback label (the serializer only uses it for logging / state keys —
+  no behavioural change).
+- **Flag for Phase 9:** delete `serializer_ray_shim.py`, have
+  ConversionService call the serializer stage directly.
+
+**13. 8F keeps the lazy-property container (no eager ordered `__init__`);
+8H closeout pulls the last Ray call out of a thinned router.** The
+plan's 8F snippet builds every orchestrator eagerly in
+`ServiceContainer.__init__` in a hand-ordered block. We did *not* adopt
+that — the lazy cached-property convention set in 8A.1 (decision 1)
+already satisfies "correct instantiation order": dependency resolution
+happens on first access (`user_service` → `auth_service` /
+`partition_service` / `job_service`; `query_service` →
+`retrieval_service` / `workspace_service`), there are no cycles, and the
+Ray shims stay un-touched until first request. 8F is therefore a
+verification pass, not a rewrite: all nine orchestrators are wired
+identically (9 `_x_service` cache slots, 9 properties, 9 providers),
+covered by a new `TestPhase8OrchestratorWiring` in `di/test_container.py`.
+- During the 8H sweep, `routers/users.py` `/users/info` was found still
+  calling `task_state_manager.get_user_pending_task_count` directly (a
+  Ray `.remote` + quota math left in a thinned router by 8A.2). It
+  passed the literal 8H greps (`vectordb` only) but contradicted "routers
+  are thin". Fixed per the plan's "Day 3: fix remaining router rewrites":
+  added `JobService.get_user_pending_task_count`, injected `JobService`
+  into `UserService` (orchestrator-to-orchestrator, same pattern as
+  UserService←PartitionService), moved the quota-usage computation into
+  `UserService.get_current_user_info` (byte-identical response), thinned
+  the handler. UserService stays Ray-free — the count goes through
+  JobService, the one 8H-excepted Ray wrapper.
+- `routers/actors.py` still imports `utils.dependencies` Ray handles —
+  intentionally out of scope: it is the Ray actor/health admin router,
+  not one of the 12 fat routers in the 8G table; it belongs to Phase 9.
+- 8H #7 ("no router > 120 lines") is not literally met (indexer 516,
+  partition 453, …) and is treated as aspirational, consistent with
+  every prior slice: the verbose OpenAPI `description=` docstrings
+  dominate the line count; the business-logic extraction — the actual
+  goal — is complete and grep-verified (#1–#6 clean).
+
+**14. Phase-8 CI fixes — the §1 "DB-backed flows dormant until Phase 11"
+deferral was wrong and is corrected here.** The unit + API CI jobs were
+red after Phase 8; four root causes, all behaviour-preserving fixes:
+- *Container never initialised (API tests, ~80 failures).* The thinned
+  routers resolve repos through the container's *own* `PostgresStore`,
+  a separate instance from the one the legacy Ray `Vectordb` actor owns
+  and `initialize()`s (`vectordb.py:188`). §1 attached the container but
+  never opened its asyncpg pool, so every catalog-backed route 500'd
+  against an uninitialised pool. Fix: `main.py` startup/shutdown hooks
+  call `container.initialize()/shutdown()` (best-effort, guarded). The
+  asyncpg layer is idempotent (Phase 7), so a second store against the
+  same DB alongside the actor's is safe. This pulls a thin slice of
+  Phase 11 forward — the original deferral broke the live app, which
+  Phase 8 must not. Phase 11 still folds this into a real lifespan.
+- *Auth router 503 instead of 400 in token mode (3 unit failures).*
+  FastAPI resolves `Depends` in declaration order; `Depends(get_auth_service)`
+  ran (and 503'd on the absent container) before the in-body
+  `_require_oidc_mode()` 400 gate. Fix: `_require_oidc_mode` is now a
+  `Depends` declared *before* the service on login/callback/
+  backchannel-logout/logout, so token mode 400s without touching the
+  container. No behaviour change in oidc mode.
+- *`components/utils.py:get_num_tokens` needs an OpenAI key (1 unit
+  failure, latent keyless-deploy defect).* It built `ChatOpenAI(...)`
+  just to count tokens; client construction requires a non-empty
+  api_key (CI mock-vLLM env has none). Fix: fall back to a local
+  tiktoken `cl100k_base` encoder when the client can't be built. Prod
+  (key present) behaviour is unchanged; the count is equivalent for the
+  GPT-3.5/4 family. Also trims LangChain off the QueryService hot path
+  (aligned with the 8H intent).
+- *Stale `routers/test_auth_router.py` (17 collection errors).* The
+  882-line file tested the pre-8A.1 fat router (`routers.auth.OIDCClient`,
+  full OIDC/JWT flow). 8A.1 thinned the router but never updated its
+  companion test — a Phase-8 omission. All that logic moved to
+  `AuthService` and is covered by `services/orchestrators/
+  test_auth_service.py`. Replaced with a lean transport test (stub
+  service via `dependency_overrides`: AUTH_MODE gate, delegation,
+  cookie set/clear, `OIDCFlowError` mapping), matching the phase
+  principle "logic tests move to the service".
+- *Search response lost `metadata.file_id` (5 API `test_search`
+  filtering failures, second pass).* `Chunk.from_langchain` lifts
+  `file_id`/`partition`/`page`/`_id` out of the free-form metadata into
+  typed `Chunk` fields; the thinned `routers/search.py:_documents`
+  returned only `Chunk.metadata`, so the API contract dropped
+  `metadata.file_id` (filter tests saw `file_id == None`; `origin` /
+  temporal fields survived because they stay free-form). Fix: shape the
+  response via `Chunk.to_langchain().metadata`, which merges the typed
+  fields back — reproducing the pre-Phase-8 router that returned the raw
+  Document metadata. Transport-only shaping, stays in the thin router.
+
+All five CI jobs (Layer guard, Linting, Unit, Integration, API) are
+green on the branch after these fixes.
+
+---
 ## Template for future entries
 
 ```

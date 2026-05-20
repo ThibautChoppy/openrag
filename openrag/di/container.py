@@ -20,6 +20,7 @@ queries.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from core.embeddings import embedder_registry
@@ -53,12 +54,44 @@ if TYPE_CHECKING:
     from core.ports.user_repo import UserRepository
     from core.ports.workspace_repo import WorkspaceRepository
     from core.vector_stores import VectorStore
+    from services.orchestrators.auth_service import AuthService
+    from services.orchestrators.conversion_service import ConversionService
+    from services.orchestrators.indexing_service import IndexingService
+    from services.orchestrators.job_service import JobService
+    from services.orchestrators.partition_service import PartitionService
+    from services.orchestrators.query_service import QueryService
+    from services.orchestrators.retrieval_service import RetrievalService
+    from services.orchestrators.user_service import UserService
+    from services.orchestrators.workspace_service import WorkspaceService
 
 
 _NO_SETTINGS_MESSAGE = (
     "ServiceContainer was constructed without a Settings instance — "
     "pass Settings to ServiceContainer(...) to wire storage adapters."
 )
+
+
+def _oidc_config_from_env():
+    """Build :class:`OIDCConfig` from the same env vars ``main.py`` validates.
+
+    Phase 8A.1 keeps OIDC config env-sourced (it is not yet wired into the
+    root :class:`Settings`); ``enabled`` mirrors ``AUTH_MODE=oidc``.
+    """
+    from core.config.auth import OIDCConfig
+
+    return OIDCConfig(
+        enabled=os.getenv("AUTH_MODE", "token").strip().lower() == "oidc",
+        issuer_url=os.getenv("OIDC_ENDPOINT", "") or "",
+        client_id=os.getenv("OIDC_CLIENT_ID", "") or "",
+        client_secret=os.getenv("OIDC_CLIENT_SECRET", "") or "",
+        redirect_uri=os.getenv("OIDC_REDIRECT_URI", "") or "",
+        scopes=os.getenv("OIDC_SCOPES", "openid email profile offline_access"),
+        token_encryption_key=os.getenv("OIDC_TOKEN_ENCRYPTION_KEY", "") or "",
+        claim_source=os.getenv("OIDC_CLAIM_SOURCE", "id_token").strip().lower(),
+        claim_mapping=os.getenv("OIDC_CLAIM_MAPPING", "").strip(),
+        post_logout_redirect_uri=os.getenv("OIDC_POST_LOGOUT_REDIRECT_URI", "") or "",
+        auto_provision_login=os.getenv("OIDC_AUTO_PROVISION_LOGIN", "false").strip().lower() == "true",
+    )
 
 
 class ServiceContainer:
@@ -73,6 +106,27 @@ class ServiceContainer:
         self._settings = settings
         self._catalog_store: CatalogStore | None = create_catalog_store(settings) if settings is not None else None
         self._vector_store: VectorStore | None = create_vector_store(settings) if settings is not None else None
+        self._auth_service: AuthService | None = None
+        self._user_service: UserService | None = None
+        self._partition_service: PartitionService | None = None
+        self._workspace_service: WorkspaceService | None = None
+        self._retrieval_service: RetrievalService | None = None
+        self._query_service: QueryService | None = None
+        self._indexing_service: IndexingService | None = None
+        self._job_service: JobService | None = None
+        self._conversion_service: ConversionService | None = None
+
+    def _require_settings(self) -> Settings:
+        """Settings guard for the settings-dependent service properties.
+
+        Without this, ``ServiceContainer()`` (no-settings legacy path)
+        fails with a bare ``AttributeError`` on ``self._settings.x`` —
+        inconsistent with the ``catalog_store`` / ``vector_store``
+        contract, which raises ``RuntimeError(_NO_SETTINGS_MESSAGE)``.
+        """
+        if self._settings is None:
+            raise RuntimeError(_NO_SETTINGS_MESSAGE)
+        return self._settings
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -180,6 +234,211 @@ class ServiceContainer:
     @property
     def preset_repo(self) -> PresetRepository:
         return self.catalog_store.preset_repo
+
+    # ------------------------------------------------------------------
+    # Orchestrators (Phase 8)
+    # ------------------------------------------------------------------
+
+    @property
+    def auth_service(self) -> AuthService:
+        """AuthService — lazily built, cached for the container's lifetime.
+
+        The OIDC client is only constructed in ``AUTH_MODE=oidc`` (it reads
+        required env vars and would raise otherwise); in token mode it is
+        ``None`` and the OIDC flow methods refuse cleanly.
+        """
+        if self._auth_service is None:
+            from services.orchestrators.auth_service import AuthService
+
+            cfg = _oidc_config_from_env()
+            client = None
+            if cfg.enabled:
+                from components.auth import get_oidc_client
+
+                client = get_oidc_client()
+            self._auth_service = AuthService(
+                user_repo=self.user_repo,
+                oidc_session_repo=self.oidc_session_repo,
+                membership_repo=self.membership_repo,
+                oidc_client=client,
+                config=cfg,
+            )
+        return self._auth_service
+
+    @property
+    def user_service(self) -> UserService:
+        """UserService — lazily built, cached for the container's lifetime."""
+        if self._user_service is None:
+            from services.orchestrators.user_service import UserService
+
+            settings = self._require_settings()
+            self._user_service = UserService(
+                user_repo=self.user_repo,
+                auth_service=self.auth_service,
+                default_file_quota=settings.rdb.default_file_quota,
+                partition_service=self.partition_service,
+                membership_repo=self.membership_repo,
+                job_service=self.job_service,
+            )
+        return self._user_service
+
+    @property
+    def partition_service(self) -> PartitionService:
+        """PartitionService — lazily built, cached for the container's lifetime."""
+        if self._partition_service is None:
+            from services.orchestrators.partition_service import PartitionService
+
+            settings = self._require_settings()
+            self._partition_service = PartitionService(
+                partition_repo=self.partition_repo,
+                membership_repo=self.membership_repo,
+                document_repo=self.document_repo,
+                vector_store=self.vector_store,
+                user_repo=self.user_repo,
+                collection=settings.vectordb.collection_name,
+            )
+        return self._partition_service
+
+    @property
+    def workspace_service(self) -> WorkspaceService:
+        """WorkspaceService — lazily built, cached for the container's lifetime."""
+        if self._workspace_service is None:
+            from services.orchestrators.workspace_service import WorkspaceService
+
+            settings = self._require_settings()
+            self._workspace_service = WorkspaceService(
+                workspace_repo=self.workspace_repo,
+                document_repo=self.document_repo,
+                vector_store=self.vector_store,
+                collection=settings.vectordb.collection_name,
+            )
+        return self._workspace_service
+
+    @property
+    def retrieval_service(self) -> RetrievalService:
+        """RetrievalService — lazily built, cached for the container's lifetime.
+
+        The ``RetrievalSearcher`` is the Ray-backed ``MilvusRayShim``
+        during the Phase-8 shim period (Ray cleanup is Phase 9); it is
+        resolved lazily so the ``Vectordb`` actor only needs to exist at
+        first request, not at container construction.
+        """
+        if self._retrieval_service is None:
+            from services.orchestrators.retrieval_service import RetrievalService
+            from services.storage.milvus_ray_shim import from_ray_namespace
+
+            settings = self._require_settings()
+            llm_cfg = settings.llm.model_dump()
+            llm = self.create_llm(
+                "vllm",
+                endpoint=llm_cfg["base_url"],
+                model_name=llm_cfg["model"],
+                api_key=llm_cfg.get("api_key", ""),
+                **{k: v for k, v in llm_cfg.items() if k not in ("base_url", "model", "api_key")},
+            )
+            reranker = None
+            rcfg = settings.reranker
+            if rcfg.enabled:
+                reranker = self.create_reranker(
+                    rcfg.provider,
+                    endpoint=rcfg.base_url,
+                    model_name=rcfg.model_name,
+                    api_key=rcfg.api_key,
+                    timeout=rcfg.timeout,
+                )
+            self._retrieval_service = RetrievalService(
+                searcher=from_ray_namespace(),
+                reranker=reranker,
+                llm=llm,
+                config=settings,
+            )
+        return self._retrieval_service
+
+    @property
+    def query_service(self) -> QueryService:
+        """QueryService — lazily built, cached for the container's lifetime.
+
+        Shares the same core LLM construction as ``retrieval_service``
+        (built from ``settings.llm``); the web-search service comes from
+        the legacy ``WebSearchFactory`` (provider is ``None`` when
+        ``WEBSEARCH_API_TOKEN`` is unset — web search silently disabled).
+        """
+        if self._query_service is None:
+            from components.websearch import WebSearchFactory
+            from services.orchestrators.query_service import QueryService
+
+            settings = self._require_settings()
+            llm_cfg = settings.llm.model_dump()
+            llm = self.create_llm(
+                "vllm",
+                endpoint=llm_cfg["base_url"],
+                model_name=llm_cfg["model"],
+                api_key=llm_cfg.get("api_key", ""),
+                **{k: v for k, v in llm_cfg.items() if k not in ("base_url", "model", "api_key")},
+            )
+            self._query_service = QueryService(
+                retrieval_service=self.retrieval_service,
+                llm=llm,
+                config=settings,
+                web_search_service=WebSearchFactory.create_service(settings),
+                workspace_service=self.workspace_service,
+            )
+        return self._query_service
+
+    @property
+    def indexing_service(self) -> IndexingService:
+        """IndexingService — lazily built, cached for the container's lifetime.
+
+        The dispatcher is the Ray-backed ``IndexerRayShim`` during the
+        Phase-8 shim period (Ray cleanup is Phase 9); it is resolved
+        lazily so the ``Indexer`` / ``TaskStateManager`` actors only need
+        to exist at first request, not at container construction.
+        """
+        if self._indexing_service is None:
+            from services.orchestrators.indexing_service import IndexingService
+            from services.storage.indexer_ray_shim import from_ray_namespace
+
+            self._indexing_service = IndexingService(
+                document_repo=self.document_repo,
+                workspace_repo=self.workspace_repo,
+                dispatcher=from_ray_namespace(),
+            )
+        return self._indexing_service
+
+    @property
+    def job_service(self) -> JobService:
+        """JobService — lazily built, cached for the container's lifetime.
+
+        Wraps the ``TaskStateManager`` Ray actor directly (8H excepts
+        JobService); resolved lazily so the actor only needs to exist at
+        first request.
+        """
+        if self._job_service is None:
+            from services.orchestrators.job_service import JobService
+            from utils.dependencies import get_task_state_manager
+
+            self._job_service = JobService(task_state_manager=get_task_state_manager())
+        return self._job_service
+
+    @property
+    def conversion_service(self) -> ConversionService:
+        """ConversionService — lazily built, cached for the container's lifetime.
+
+        The serializer is the Ray-backed ``SerializerRayShim`` during the
+        Phase-8 shim period (Ray cleanup is Phase 9); the DocSerializer
+        actor is resolved lazily per call inside the shim.
+        """
+        if self._conversion_service is None:
+            from services.orchestrators.conversion_service import ConversionService
+            from services.storage.serializer_ray_shim import from_ray_namespace
+
+            settings = self._require_settings()
+            self._conversion_service = ConversionService(
+                serializer=from_ray_namespace(),
+                vector_store=self.vector_store,
+                collection=settings.vectordb.collection_name,
+            )
+        return self._conversion_service
 
     # ------------------------------------------------------------------
     # Registry-based inference factories (Phase 6)

@@ -256,6 +256,61 @@ app.add_middleware(
 )
 
 app.state.app_state = AppState(config)
+
+# Phase 8 composition root. Attached here as minimal wiring so the thinned
+# routers can resolve services via di.providers; Phase 11 moves this into a
+# proper FastAPI lifespan. Construction is best-effort: a Milvus/PG hiccup at
+# import must not stop the app from booting (the providers raise 503 if the
+# container is absent).
+try:
+    from di.container import ServiceContainer
+
+    app.state.container = ServiceContainer(config)
+except Exception:  # pragma: no cover - defensive boot guard
+    # Best-effort by design (a Milvus/PG hiccup must not block boot, and
+    # di/providers.py serves a 503 while the container is absent), but log
+    # at exception level with a full traceback so an unexpected failure
+    # (import/syntax/misconfig) is loud rather than a one-line warning.
+    logger.exception("ServiceContainer wiring skipped")
+    app.state.container = None
+
+
+@app.on_event("startup")
+async def _initialize_container() -> None:
+    """Open the container's asyncpg pool + run idempotent migrations.
+
+    The thinned Phase-8 routers resolve repositories through the container's
+    own :class:`PostgresStore`, which is a *separate* instance from the one
+    the legacy Ray ``Vectordb`` actor owns. Without this the catalog-backed
+    routes raise (uninitialised pool). The asyncpg layer (Phase 7) is
+    idempotent, so initialising alongside the actor's store is safe. Phase 11
+    folds this into a lifespan; the deferral originally logged in the Phase-8
+    decision log (§1) is corrected here because it broke the live app.
+    """
+    container = getattr(app.state, "container", None)
+    if container is None:
+        return
+    try:
+        await container.initialize()
+    except Exception:  # pragma: no cover - defensive boot guard
+        # A half-initialised container (e.g. asyncpg pool never opened)
+        # would route requests into broken repos and 500. Drop it so
+        # di/providers.py serves the intended degraded 503 instead.
+        logger.exception("ServiceContainer.initialize failed; serving degraded (503)")
+        app.state.container = None
+
+
+@app.on_event("shutdown")
+async def _shutdown_container() -> None:
+    container = getattr(app.state, "container", None)
+    if container is None:
+        return
+    try:
+        await container.shutdown()
+    except Exception:  # pragma: no cover - defensive shutdown guard
+        logger.exception("ServiceContainer.shutdown skipped")
+
+
 app.mount("/static", StaticFiles(directory=DATA_DIR.resolve(), check_dir=True), name="static")
 
 
