@@ -33,7 +33,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from models.user import UserCreate
 from utils.dependencies import get_vectordb
-from utils.logger import get_logger
+from utils.logger import get_logger, mask_email
 
 # Whitelist mirrors ``api._OIDC_CLAIM_MAPPING_ALLOWED_FIELDS`` — kept in sync
 # at the DB layer too (``PartitionFileManager.update_user_fields``).
@@ -368,19 +368,38 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                 )
             )
         except Exception as e:
-            # Race condition (concurrent first-login) or DB failure — try to
-            # recover by re-reading; if still missing, surface a 500 so the
-            # operator notices instead of silently masking the problem.
+            # create_user failed. Separate the two causes:
+            #   1. Concurrent first-login on the same sub — another request
+            #      already inserted the row; re-read by external_id and proceed.
+            #   2. The unique email index rejected the insert because a row with
+            #      this email already exists under a different identity. Matching
+            #      is external_id-only, so it wasn't found above, and only an
+            #      admin can reconcile it — surface an actionable 409 rather than
+            #      an opaque 500.
             logger.exception(f"OIDC auto-provisioning failed for sub={sub!r}: {e}")
             user = await vdb.get_user_by_external_id.remote(sub)
             if user is None:
+                if isinstance(email, str) and email.strip() and await vdb.get_user_by_email.remote(email):
+                    logger.error(
+                        f"OIDC auto-provisioning blocked for sub={sub!r}: an account with email "
+                        f"{mask_email(email)} already exists under a different identity. Set that "
+                        f"user's external_user_id to this sub to allow login."
+                    )
+                    return _json_error(
+                        status.HTTP_409_CONFLICT,
+                        "An account with this email already exists. Ask your administrator to "
+                        "link it to your identity provider login.",
+                        delete_state_cookie=True,
+                    )
                 return _json_error(
                     status.HTTP_500_INTERNAL_SERVER_ERROR,
                     "Failed to provision user",
                     delete_state_cookie=True,
                 )
         else:
-            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r}, display_name={display_name!r})")
+            # display_name (the user's real name) is intentionally not logged — id + sub
+            # identify the row without writing PII to the logs.
+            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r})")
 
     # --- 4b. Auto-provision: keep display_name + email in sync with claims ----
     # When OIDC_AUTO_PROVISION_LOGIN is on, the IdP is treated as the source of
