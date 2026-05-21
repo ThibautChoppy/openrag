@@ -368,12 +368,29 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                 )
             )
         except Exception as e:
-            # Race condition (concurrent first-login) or DB failure — try to
-            # recover by re-reading; if still missing, surface a 500 so the
-            # operator notices instead of silently masking the problem.
+            # create_user failed. Separate the two causes:
+            #   1. Concurrent first-login on the same sub — another request
+            #      already inserted the row; re-read by external_id and proceed.
+            #   2. The unique email index rejected the insert because a row with
+            #      this email already exists under a different identity. Matching
+            #      is external_id-only, so it wasn't found above, and only an
+            #      admin can reconcile it — surface an actionable 409 rather than
+            #      an opaque 500.
             logger.exception(f"OIDC auto-provisioning failed for sub={sub!r}: {e}")
             user = await vdb.get_user_by_external_id.remote(sub)
             if user is None:
+                if isinstance(email, str) and email.strip() and await vdb.get_user_by_email.remote(email):
+                    logger.error(
+                        f"OIDC auto-provisioning blocked for sub={sub!r}: an account with email "
+                        f"{email!r} already exists under a different identity. Set that user's "
+                        f"external_user_id to this sub to allow login."
+                    )
+                    return _json_error(
+                        status.HTTP_409_CONFLICT,
+                        "An account with this email already exists. Ask your administrator to "
+                        "link it to your identity provider login.",
+                        delete_state_cookie=True,
+                    )
                 return _json_error(
                     status.HTTP_500_INTERNAL_SERVER_ERROR,
                     "Failed to provision user",

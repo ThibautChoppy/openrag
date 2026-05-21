@@ -882,6 +882,22 @@ class PartitionFileManager:
                 return None
             return self._user_to_dict(user)
 
+    def get_user_by_email(self, email: str) -> dict | None:
+        """Return the user (as dict) whose ``email`` matches (case-insensitive), or None.
+
+        Email is normalized the same way ``create_user`` stores it (stripped,
+        lowercased). This is used only to explain an auto-provisioning collision
+        on the unique ``email`` index — never as a login-matching path, which
+        stays ``external_user_id``-only.
+        """
+        if not isinstance(email, str) or not email.strip():
+            return None
+        with self.Session() as s:
+            user = s.query(User).filter(User.email == email.strip().lower()).first()
+            if not user:
+                return None
+            return self._user_to_dict(user)
+
     def update_user_fields(self, user_id: int, fields: dict[str, object]) -> None:
         """Update whitelisted scalar fields on the users table.
 

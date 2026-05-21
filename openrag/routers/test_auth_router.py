@@ -35,6 +35,7 @@ from authlib.jose import JsonWebKey, JsonWebToken  # noqa: E402
 from cryptography.fernet import Fernet  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants — align with the existing auth unit tests
@@ -139,6 +140,7 @@ class _StubVectorDB:
     def __init__(self):
         self.calls: list[tuple[str, tuple, dict]] = []
         self._users_by_sub: dict[str, dict] = {}
+        self._users_by_email: dict[str, dict] = {}
         self._users_by_id: dict[int, dict] = {}
         self._sessions: dict[int, dict] = {}
         self._sessions_by_token: dict[str, int] = {}
@@ -148,6 +150,7 @@ class _StubVectorDB:
         self.get_user_by_external_id = _RayMethodStub(
             "get_user_by_external_id", self._impl_get_user_by_external_id, self.calls
         )
+        self.get_user_by_email = _RayMethodStub("get_user_by_email", self._impl_get_user_by_email, self.calls)
         self.update_user_fields = _RayMethodStub("update_user_fields", self._impl_update_user_fields, self.calls)
         self.create_user = _RayMethodStub("create_user", self._impl_create_user, self.calls)
         self.create_oidc_session = _RayMethodStub("create_oidc_session", self._impl_create_oidc_session, self.calls)
@@ -181,12 +184,19 @@ class _StubVectorDB:
         self._users_by_id[user_id] = user
         if external_user_id:
             self._users_by_sub[external_user_id] = user
+        if email:
+            self._users_by_email[email.strip().lower()] = user
         return user
 
     # Impls ------------------------------------------------------------------
 
     def _impl_get_user_by_external_id(self, external_user_id: str):
         return self._users_by_sub.get(external_user_id)
+
+    def _impl_get_user_by_email(self, email: str):
+        if not isinstance(email, str) or not email.strip():
+            return None
+        return self._users_by_email.get(email.strip().lower())
 
     def _impl_create_user(self, body):
         # Accept either UserCreate or a plain dict, like the real Ray method
@@ -195,13 +205,18 @@ class _StubVectorDB:
             data = body.model_dump()
         else:
             data = dict(body)
+        normalized_email = data.get("email").strip().lower() if data.get("email") else None
+        # Faithful to the unique ix_users_email index: a second row with the
+        # same email is rejected, just like Postgres would.
+        if normalized_email and normalized_email in self._users_by_email:
+            raise IntegrityError("duplicate key value violates unique constraint", None, Exception())
         user_id = self._next_user_id
         self._next_user_id += 1
         user = {
             "id": user_id,
             "display_name": data.get("display_name"),
             "external_user_id": data.get("external_user_id"),
-            "email": (data.get("email").strip().lower() if data.get("email") else None),
+            "email": normalized_email,
             "is_admin": bool(data.get("is_admin", False)),
             "file_quota": data.get("file_quota"),
             "file_count": 0,
@@ -210,6 +225,8 @@ class _StubVectorDB:
         self._users_by_id[user_id] = user
         if data.get("external_user_id"):
             self._users_by_sub[data["external_user_id"]] = user
+        if normalized_email:
+            self._users_by_email[normalized_email] = user
         return user
 
     def _impl_update_user_fields(self, user_id: int, fields: dict):
@@ -532,6 +549,28 @@ def test_callback_auto_provisions_user_when_enabled(client, fresh_stub_vectordb,
     assert data["display_name"] == "Alice Liddell"
     assert data["email"] == "alice@example.com"
     assert data["is_admin"] is False  # auto-provisioned users are NEVER admin
+
+
+def test_callback_auto_provision_email_collision_returns_409(client, fresh_stub_vectordb, monkeypatch):
+    """First-login auto-provisioning where the email already belongs to a row
+    under a different identity must not 500. Matching is external_id-only, so
+    the existing row isn't found by sub; create_user then hits the unique email
+    index. The callback recovers with an actionable 409 instead of 500."""
+    monkeypatch.setenv("OIDC_AUTO_PROVISION_LOGIN", "true")
+    # Pre-existing user with this email but a *different* external_user_id.
+    fresh_stub_vectordb.add_user(user_id=7, email="alice@example.com", external_user_id="sub-old")
+
+    _setup_jwks(client.oidc_router)
+    state, nonce = _begin_login_and_extract_state(client)
+    id_token = _sign_jwt(_id_token_payload(nonce, sub="sub-new-user", email="alice@example.com", extra={}))
+    _mock_token_endpoint(client.oidc_router, id_token)
+
+    r = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+
+    assert r.status_code == 409, r.text
+    assert "already exists" in r.text
+    # No session was minted for the failed login.
+    assert not any(c[0] == "create_oidc_session" for c in fresh_stub_vectordb.calls)
 
 
 def test_callback_auto_provision_falls_back_to_sub_when_no_name(client, fresh_stub_vectordb, monkeypatch):
