@@ -7,18 +7,17 @@ import openai
 from config import load_config
 from core.indexing import validators as core_validators
 from core.utils.exceptions import OpenRAGError
-from di.providers import get_auth_service, get_partition_service
+from di.providers import get_auth_service, get_job_service, get_partition_service
 from fastapi import Depends, Form, HTTPException, Request, UploadFile, status
 from openai import AsyncOpenAI
 from services.orchestrators.auth_service import AuthService
+from services.orchestrators.job_service import JobService
 from services.orchestrators.partition_service import PartitionService
-from utils.dependencies import get_task_state_manager
 from utils.logger import get_logger
 
 # load config
 config = load_config()
 logger = get_logger()
-task_state_manager = get_task_state_manager()
 
 SUPER_ADMIN_MODE = os.getenv("SUPER_ADMIN_MODE", "false").lower() == "true"
 DATA_DIR = config.paths.data_dir
@@ -194,8 +193,12 @@ async def require_partitions_viewer(
     return user
 
 
-async def require_task_owner(task_id=Depends(request_task_id), user=Depends(current_user)):
-    task_details = await task_state_manager.get_details.remote(task_id)
+async def require_task_owner(
+    task_id=Depends(request_task_id),
+    user=Depends(current_user),
+    job_service: JobService = Depends(get_job_service),
+):
+    task_details = await job_service.get_task_details(task_id)
     if not task_details:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -253,6 +256,7 @@ def require_admin_or_self(
 async def check_user_file_quota(
     user=Depends(current_user),
     auth_service: AuthService = Depends(get_auth_service),
+    job_service: JobService = Depends(get_job_service),
 ):
     """
     Check if user has reached their file quota.
@@ -275,9 +279,7 @@ async def check_user_file_quota(
         return user
 
     user_id = user.get("id")
-    pending_count = await task_state_manager.get_user_pending_task_count.remote(
-        user_id
-    )  # Get pending task count from task manager
+    pending_count = await job_service.get_user_pending_task_count(user_id)
 
     logger.debug(
         "User file quota check",
