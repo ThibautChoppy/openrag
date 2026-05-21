@@ -260,6 +260,61 @@ def test_aggregate_mixed_results():
     assert {f.stage for f in summary.failures} == {"embed_failed", "chunk_failed"}
 
 
+@pytest.mark.asyncio
+async def test_e2e_multiple_documents_pipeline_and_summary():
+    docs = [
+        Document(filename="ok-1.txt", text="alpha", partition="tenant-a"),
+        Document(filename="bad.txt", text="bad", partition="tenant-a"),
+        Document(filename="ok-2.txt", text="beta", partition="tenant-b"),
+    ]
+
+    class TextParser:
+        async def parse(self, document: Document) -> ProcessedDocument:
+            if document.filename == "bad.txt":
+                raise RuntimeError("unsupported document")
+            return ProcessedDocument(
+                document_id=document.id,
+                text_blocks=[TextBlock(text=document.text or "")],
+            )
+
+        def supported_types(self) -> list[str]:
+            return [DocumentType.TEXT.value]
+
+    class TextChunker:
+        def chunk(self, document: ProcessedDocument, partition: str = "default") -> list[Chunk]:
+            return [
+                Chunk(
+                    id=f"{document.document_id}-chunk",
+                    document_id=document.document_id,
+                    text=document.text_blocks[0].text,
+                    partition=partition,
+                )
+            ]
+
+    store = FakeVectorStore()
+    pipeline = build_indexing_pipeline(
+        parser=TextParser(),
+        chunker=TextChunker(),
+        embedder=FakeEmbedder([[1.0]]),
+        vector_store=store,
+    )
+    rows = [{"document": doc, "partition": doc.partition} for doc in docs]
+
+    processed_rows = await ingest_batch(pipeline, rows, concurrency=2)
+    summary = aggregate_batch_results(processed_rows)
+
+    assert [row["stage"] for row in processed_rows] == ["stored", "parse_failed", "stored"]
+    assert summary.total == 3
+    assert summary.succeeded == 2
+    assert summary.failed == 1
+    assert summary.stored_count == 2
+    assert summary.success_rate == pytest.approx(2 / 3)
+    assert summary.failures[0].stage == "parse_failed"
+    assert summary.failures[0].error == "unsupported document"
+    assert store.calls[0][1] == "tenant-a"
+    assert store.calls[1][1] == "tenant-b"
+
+
 def test_aggregate_all_failed():
     rows = [
         {"stage": "parse_failed", "error": "bad file"},
