@@ -33,7 +33,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from models.user import UserCreate
 from utils.dependencies import get_vectordb
-from utils.logger import get_logger
+from utils.logger import get_logger, mask_email
 
 # Whitelist mirrors ``api._OIDC_CLAIM_MAPPING_ALLOWED_FIELDS`` — kept in sync
 # at the DB layer too (``PartitionFileManager.update_user_fields``).
@@ -382,8 +382,8 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                 if isinstance(email, str) and email.strip() and await vdb.get_user_by_email.remote(email):
                     logger.error(
                         f"OIDC auto-provisioning blocked for sub={sub!r}: an account with email "
-                        f"{email!r} already exists under a different identity. Set that user's "
-                        f"external_user_id to this sub to allow login."
+                        f"{mask_email(email)} already exists under a different identity. Set that "
+                        f"user's external_user_id to this sub to allow login."
                     )
                     return _json_error(
                         status.HTTP_409_CONFLICT,
@@ -397,7 +397,9 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                     delete_state_cookie=True,
                 )
         else:
-            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r}, display_name={display_name!r})")
+            # display_name (the user's real name) is intentionally not logged — id + sub
+            # identify the row without writing PII to the logs.
+            logger.info(f"OIDC user auto-provisioned (id={user['id']}, sub={sub!r})")
 
     # --- 4b. Auto-provision: keep display_name + email in sync with claims ----
     # When OIDC_AUTO_PROVISION_LOGIN is on, the IdP is treated as the source of
