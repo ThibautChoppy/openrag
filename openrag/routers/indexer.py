@@ -17,7 +17,7 @@ from typing import Any
 
 from components.indexer.utils.files import sanitize_filename, save_file_to_disk
 from config import load_config
-from di.providers import get_indexing_service
+from di.providers import get_auth_service, get_indexing_service, get_partition_service
 from fastapi import (
     APIRouter,
     Depends,
@@ -29,7 +29,9 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from services.orchestrators.auth_service import AuthService
 from services.orchestrators.indexing_service import IndexingService
+from services.orchestrators.partition_service import PartitionService
 from utils.logger import get_logger
 
 from .utils import (
@@ -310,6 +312,8 @@ async def patch_file(
     user=Depends(require_partition_editor),
     user_partitions=Depends(current_user_partitions),
     service: IndexingService = Depends(get_indexing_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     # Make sure partition role is valid if partition is being changed
     if "partition" in metadata:
@@ -318,6 +322,8 @@ async def patch_file(
             user=user,
             user_partitions=user_partitions,
             required_role="editor",
+            auth_service=auth_service,
+            partition_service=partition_service,
         )
 
     await service.update_metadata(file_id, metadata, partition, user)
@@ -356,6 +362,8 @@ async def copy_file_between_partitions(
     user_partitions=Depends(current_user_partitions),
     _quota_check=Depends(check_user_file_quota),
     service: IndexingService = Depends(get_indexing_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     # Make sure user has access to the source partition
     await ensure_partition_role(
@@ -363,6 +371,8 @@ async def copy_file_between_partitions(
         user=user,
         user_partitions=user_partitions,
         required_role="viewer",
+        auth_service=auth_service,
+        partition_service=partition_service,
     )
 
     await service.copy_file(

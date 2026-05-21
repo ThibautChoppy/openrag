@@ -257,6 +257,7 @@ async def openai_chat_completion(
     user_partitions=Depends(current_user_or_admin_partitions_list),
     _: None = Depends(check_llm_model_availability),
     service: QueryService = Depends(get_query_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     model_name = request.model or config.llm.model
     log = logger.bind(model=model_name, endpoint="/chat/completions")
@@ -274,7 +275,12 @@ async def openai_chat_completion(
         check_tokens_limit(request, log)
         partitions = None
     else:
-        partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
+        partitions = await get_partition_name(
+            model_name,
+            user_partitions,
+            partition_service=partition_service,
+            is_admin=user["is_admin"],
+        )
         log.debug(f"Using partitions: {partitions}")
 
     def prep(docs, web):
@@ -343,6 +349,7 @@ async def openai_completion(
     user_partitions=Depends(current_user_or_admin_partitions_list),
     _: None = Depends(check_llm_model_availability),
     service: QueryService = Depends(get_query_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     model_name = request.model or config.llm.model
     log = logger.bind(model=model_name, endpoint="/completions")
@@ -362,7 +369,12 @@ async def openai_completion(
         check_tokens_limit(request, log)
         partitions = None
     else:
-        partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
+        partitions = await get_partition_name(
+            model_name,
+            user_partitions,
+            partition_service=partition_service,
+            is_admin=user["is_admin"],
+        )
 
     resp = await service.complete(
         partitions=partitions,
