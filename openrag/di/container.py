@@ -316,18 +316,26 @@ class ServiceContainer:
 
     @property
     def retrieval_service(self) -> RetrievalService:
-        """RetrievalService — lazily built, cached for the container's lifetime.
-
-        The ``RetrievalSearcher`` is the Ray-backed ``MilvusRayShim``
-        during the Phase-8 shim period (Ray cleanup is Phase 9); it is
-        resolved lazily so the ``Vectordb`` actor only needs to exist at
-        first request, not at container construction.
-        """
+        """RetrievalService — lazily built, cached for the container's lifetime."""
         if self._retrieval_service is None:
             from services.orchestrators.retrieval_service import RetrievalService
-            from services.storage.milvus_ray_shim import from_ray_namespace
+            from services.storage.vector_store_searcher import VectorStoreSearcher
 
             settings = self._require_settings()
+            embed_cfg = settings.embedder
+            embedder = self.create_embedder(
+                "vllm",
+                endpoint=embed_cfg.base_url,
+                model_name=embed_cfg.model_name,
+                api_key=embed_cfg.api_key,
+                max_model_len=embed_cfg.max_model_len,
+            )
+            searcher = VectorStoreSearcher(
+                vector_store=self.vector_store,
+                embedder=embedder,
+                document_repo=self.document_repo,
+                collection=settings.vectordb.collection_name,
+            )
             llm_cfg = settings.llm.model_dump()
             llm = self.create_llm(
                 "vllm",
@@ -347,7 +355,7 @@ class ServiceContainer:
                     timeout=rcfg.timeout,
                 )
             self._retrieval_service = RetrievalService(
-                searcher=from_ray_namespace(),
+                searcher=searcher,
                 reranker=reranker,
                 llm=llm,
                 config=settings,

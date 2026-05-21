@@ -39,8 +39,6 @@ from core.retrieval.retriever import (
 from langchain_core.documents.base import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from services.storage.milvus_ray_shim import MilvusRayShim
-from utils.dependencies import get_vectordb
 from utils.logger import get_logger
 
 logger = get_logger()
@@ -70,9 +68,9 @@ class _LangChainLLMAdapter(_CoreLLM):
         pass  # Not implemented since legacy code doesn't use streaming; core retriever won't call this method.
 
 
-def _searcher() -> MilvusRayShim:
-    """Wrap the legacy Vectordb Ray actor as a core ``RetrievalSearcher``."""
-    return MilvusRayShim(get_vectordb())
+def _searcher():
+    """Deferred lookup — Phase 9A removed the MilvusRayShim; use DI container."""
+    raise RuntimeError("Legacy retriever path removed in Phase 9A. Use RetrievalService from the DI container instead.")
 
 
 def _to_documents(chunks: list[Chunk]) -> list[Document]:
@@ -287,12 +285,13 @@ async def _expand_with_related_chunks(
     """Backward-compat free-function — delegates to the core expansion helper.
 
     The legacy callers pass a Ray actor via ``db``; we wrap it in
-    ``MilvusRayShim`` to satisfy the core ``RetrievalSearcher`` port.
+    ``RetrievalSearcher`` port. Phase 9A: ``db`` must now be a
+    ``RetrievalSearcher`` directly (the MilvusRayShim shim is removed).
     """
     if not results or (not include_related and not include_ancestors):
         return results
     expanded = await _core_expand(
-        searcher=MilvusRayShim(db),
+        searcher=db,
         results=_from_documents(results),
         include_related=include_related,
         include_ancestors=include_ancestors,
