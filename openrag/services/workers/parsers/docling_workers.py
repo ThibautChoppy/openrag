@@ -60,9 +60,7 @@ class DoclingWorker:
         pipeline_options.accelerator_options = AcceleratorOptions(device=AcceleratorDevice.AUTO)
         self.converter = DocumentConverter(
             format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=pipeline_options, backend=PyPdfiumDocumentBackend
-                )
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options, backend=PyPdfiumDocumentBackend)
             }
         )
 
