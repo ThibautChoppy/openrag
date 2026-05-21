@@ -18,7 +18,9 @@ from datetime import datetime, timedelta
 import pytest
 from components.indexer.vectordb.models import Base, User
 from components.indexer.vectordb.utils import PartitionFileManager
+from models.user import UserCreate
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from utils.logger import get_logger
 
@@ -82,6 +84,42 @@ def test_get_user_by_external_id_returns_user(pfm):
 def test_get_user_by_external_id_returns_none_for_unknown(pfm):
     _make_user(pfm, external_user_id="sub-abc-123")
     assert pfm.get_user_by_external_id("sub-other") is None
+
+
+# ---------------------------------------------------------------------------
+# create_user — email uniqueness vs. null emails
+# ---------------------------------------------------------------------------
+
+
+def test_create_user_allows_multiple_null_emails(pfm):
+    """No email provided → the user is still created, and a second null-email
+    user is allowed too. NULLs are distinct under the unique email index, so
+    email-less accounts never collide with each other."""
+    u1 = pfm.create_user(UserCreate(display_name="A", external_user_id="sub-a", email=None))
+    u2 = pfm.create_user(UserCreate(display_name="B", external_user_id="sub-b", email=None))
+    # Empty-string email is treated as "no email" too.
+    u3 = pfm.create_user(UserCreate(display_name="C", external_user_id="sub-c", email=""))
+    assert u1["email"] is None
+    assert u2["email"] is None
+    assert u3["email"] is None
+    assert len({u1["id"], u2["id"], u3["id"]}) == 3
+
+
+def test_create_user_rejects_duplicate_email_case_insensitive(pfm):
+    """A real (non-null) email is unique and matched case-insensitively, since
+    create_user lowercases before storing."""
+    pfm.create_user(UserCreate(display_name="A", external_user_id="sub-a", email="dup@example.com"))
+    with pytest.raises(IntegrityError):
+        pfm.create_user(UserCreate(display_name="B", external_user_id="sub-b", email="DUP@Example.com"))
+
+
+def test_get_user_by_email_is_case_insensitive_and_none_safe(pfm):
+    pfm.create_user(UserCreate(display_name="A", external_user_id="sub-a", email="Found@Example.com"))
+    assert pfm.get_user_by_email("found@example.com") is not None
+    assert pfm.get_user_by_email("FOUND@EXAMPLE.COM") is not None
+    assert pfm.get_user_by_email("missing@example.com") is None
+    assert pfm.get_user_by_email("") is None
+    assert pfm.get_user_by_email(None) is None
 
 
 # ---------------------------------------------------------------------------
