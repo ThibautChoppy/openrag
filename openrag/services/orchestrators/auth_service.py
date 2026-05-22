@@ -329,7 +329,7 @@ class AuthService:
             {
                 "partition": membership.partition,
                 "role": membership.role.value,
-                "added_at": membership.added_at.isoformat() if membership.added_at else None,
+                "created_at": membership.added_at.isoformat() if membership.added_at else None,
             }
             for membership in memberships
         ]
