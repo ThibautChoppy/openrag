@@ -41,9 +41,7 @@ class IndexerPool:
             embedder=embedder,
             vector_store=self._vector_store,
         )
-        rdb_cfg = cfg.rdb.model_copy(
-            update={"database": f"partitions_for_collection_{cfg.vectordb.collection_name}"}
-        )
+        rdb_cfg = cfg.rdb.model_copy(update={"database": f"partitions_for_collection_{cfg.vectordb.collection_name}"})
         self._catalog_store = PostgresStore(rdb_cfg, run_migrations=False)
         self._catalog_initialized = False
         self._worker = IndexerWorker(
