@@ -26,9 +26,15 @@ class IndexerWorker:
     the task, and for storing the object ref via ``set_object_ref``.
     """
 
-    def __init__(self, pipeline: IndexingPipeline, task_state_manager: Any) -> None:
+    def __init__(
+        self,
+        pipeline: IndexingPipeline,
+        task_state_manager: Any,
+        document_repo: Any = None,
+    ) -> None:
         self._pipeline = pipeline
         self._tsm = task_state_manager
+        self._document_repo = document_repo
 
     async def process_file(
         self,
@@ -60,12 +66,50 @@ class IndexerWorker:
                 "workspace_ids": workspace_ids,
             }
             await self._pipeline.run(row)
+            if self._document_repo is not None:
+                await _write_catalog_record(
+                    doc_repo=self._document_repo,
+                    metadata=metadata,
+                    partition=partition,
+                    user=user,
+                    replace=replace,
+                )
             await self._tsm.set_state.remote(task_id, "COMPLETED")
             return {"stored_count": row.get("stored_count", 0), "stage": row.get("stage", "")}
         except Exception:
             tb = traceback.format_exc()
             await self._tsm.set_failed_if_not_cancelled.remote(task_id, tb)
             raise
+
+
+async def _write_catalog_record(
+    *,
+    doc_repo: Any,
+    metadata: dict[str, Any],
+    partition: str,
+    user: dict[str, Any] | None,
+    replace: bool,
+) -> None:
+    file_id = metadata.get("file_id", "")
+    file_metadata = {key: value for key, value in metadata.items() if key != "page"}
+    if replace:
+        await doc_repo.update_file_in_partition(
+            file_id=file_id,
+            partition=partition,
+            file_metadata=file_metadata,
+            relationship_id=metadata.get("relationship_id"),
+            parent_id=metadata.get("parent_id"),
+        )
+        return
+
+    await doc_repo.add_file_to_partition(
+        file_id=file_id,
+        partition=partition,
+        file_metadata=file_metadata,
+        user_id=user.get("id") if user else None,
+        relationship_id=metadata.get("relationship_id"),
+        parent_id=metadata.get("parent_id"),
+    )
 
 
 def _load_document(path: str, metadata: dict[str, Any], partition: str) -> Document:

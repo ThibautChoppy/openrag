@@ -43,10 +43,14 @@ class FakeEmbedder:
 class FakeVectorStore:
     def __init__(self) -> None:
         self.calls: list[tuple[list[Chunk], str]] = []
+        self.ensure_calls: list[tuple[str, int]] = []
 
     async def upsert(self, chunks: list[Chunk], collection: str = "default") -> int:
         self.calls.append((chunks, collection))
         return len(chunks)
+
+    async def ensure_collection(self, name: str, dimension: int, **kwargs) -> None:
+        self.ensure_calls.append((name, dimension))
 
 
 @pytest.mark.asyncio
@@ -72,7 +76,8 @@ async def test_pipeline_runs_required_stages_in_order_and_keeps_row_object():
     assert parser.calls == [document]
     assert chunker.calls == [(processed, "tenant-a")]
     assert embedder.calls == [["hello"]]
-    assert vector_store.calls == [(row["chunks"], "tenant-a")]
+    assert vector_store.ensure_calls == [("default", 2)]
+    assert vector_store.calls == [(row["chunks"], "default")]
     assert row["stage"] == "stored"
     assert row["stored_count"] == 1
     assert row["chunks"][0].embedding == [1.0, 0.0]

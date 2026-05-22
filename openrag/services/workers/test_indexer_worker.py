@@ -48,10 +48,14 @@ class FakeEmbedder:
 class FakeVectorStore:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.ensure_calls: list[tuple[str, int]] = []
 
     async def upsert(self, chunks: list[Chunk], collection: str = "default") -> int:
         self.calls.append((chunks, collection))
         return len(chunks)
+
+    async def ensure_collection(self, name: str, dimension: int, **kwargs: Any) -> None:
+        self.ensure_calls.append((name, dimension))
 
 
 def _fake_tsm() -> MagicMock:
@@ -71,6 +75,20 @@ def _make_pipeline(processed: ProcessedDocument, chunks: list[Chunk]) -> Any:
         embedder=FakeEmbedder(),
         vector_store=FakeVectorStore(),
     )
+
+
+class FakeDocumentRepo:
+    def __init__(self) -> None:
+        self.add_calls: list[dict[str, Any]] = []
+        self.update_calls: list[dict[str, Any]] = []
+
+    async def add_file_to_partition(self, **kwargs: Any) -> bool:
+        self.add_calls.append(kwargs)
+        return True
+
+    async def update_file_in_partition(self, **kwargs: Any) -> bool:
+        self.update_calls.append(kwargs)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -209,3 +227,101 @@ async def test_process_file_passes_partition_and_filename_to_row(tmp_path: Path)
     )
 
     assert seen_partitions == ["tenant-b"]
+
+
+@pytest.mark.asyncio
+async def test_process_file_creates_catalog_record_after_successful_pipeline(tmp_path: Path) -> None:
+    path = tmp_path / "doc.txt"
+    path.write_bytes(b"content")
+    processed = ProcessedDocument(document_id="d1", text_blocks=[TextBlock(text="content")])
+    chunks = [Chunk(id="c1", text="content", partition="p")]
+    repo = FakeDocumentRepo()
+    worker = IndexerWorker(
+        pipeline=_make_pipeline(processed, chunks),
+        task_state_manager=_fake_tsm(),
+        document_repo=repo,
+    )
+
+    await worker.process_file(
+        task_id="t-new",
+        path=str(path),
+        metadata={"file_id": "f1", "relationship_id": "rel", "parent_id": "parent"},
+        partition="p",
+        user={"id": 42},
+    )
+
+    assert repo.add_calls == [
+        {
+            "file_id": "f1",
+            "partition": "p",
+            "file_metadata": {"file_id": "f1", "relationship_id": "rel", "parent_id": "parent"},
+            "user_id": 42,
+            "relationship_id": "rel",
+            "parent_id": "parent",
+        }
+    ]
+    assert repo.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_process_file_updates_catalog_record_on_replace(tmp_path: Path) -> None:
+    path = tmp_path / "doc.txt"
+    path.write_bytes(b"content")
+    processed = ProcessedDocument(document_id="d1", text_blocks=[TextBlock(text="content")])
+    chunks = [Chunk(id="c1", text="content", partition="p")]
+    repo = FakeDocumentRepo()
+    worker = IndexerWorker(
+        pipeline=_make_pipeline(processed, chunks),
+        task_state_manager=_fake_tsm(),
+        document_repo=repo,
+    )
+
+    await worker.process_file(
+        task_id="t-replace",
+        path=str(path),
+        metadata={"file_id": "f1"},
+        partition="p",
+        replace=True,
+    )
+
+    assert repo.update_calls == [
+        {
+            "file_id": "f1",
+            "partition": "p",
+            "file_metadata": {"file_id": "f1"},
+            "relationship_id": None,
+            "parent_id": None,
+        }
+    ]
+    assert repo.add_calls == []
+
+
+@pytest.mark.asyncio
+async def test_process_file_catalog_failure_sets_failed_state(tmp_path: Path) -> None:
+    path = tmp_path / "doc.txt"
+    path.write_bytes(b"content")
+    processed = ProcessedDocument(document_id="d1", text_blocks=[TextBlock(text="content")])
+    chunks = [Chunk(id="c1", text="content", partition="p")]
+    tsm = _fake_tsm()
+
+    class BrokenRepo:
+        async def add_file_to_partition(self, **kwargs: Any) -> bool:
+            raise RuntimeError("pg down")
+
+    worker = IndexerWorker(
+        pipeline=_make_pipeline(processed, chunks),
+        task_state_manager=tsm,
+        document_repo=BrokenRepo(),
+    )
+
+    with pytest.raises(RuntimeError, match="pg down"):
+        await worker.process_file(
+            task_id="t-fail",
+            path=str(path),
+            metadata={"file_id": "f1"},
+            partition="p",
+        )
+
+    tsm.set_failed_if_not_cancelled.remote.assert_called_once()
+    completed_calls = [call for call in tsm.set_state.remote.call_args_list if call.args == ("t-fail", "COMPLETED")]
+    assert completed_calls == []

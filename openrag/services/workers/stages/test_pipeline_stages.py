@@ -83,6 +83,7 @@ class FakeVectorStore(VectorStore):
         self.count = count
         self.error = error
         self.calls: list[tuple[list[Chunk], str]] = []
+        self.ensure_calls: list[tuple[str, int]] = []
 
     async def upsert(self, chunks: list[Chunk], collection: str = "default") -> int:
         self.calls.append((chunks, collection))
@@ -99,6 +100,7 @@ class FakeVectorStore(VectorStore):
         return 0
 
     async def ensure_collection(self, name: str, dimension: int, **kwargs) -> None:
+        self.ensure_calls.append((name, dimension))
         return None
 
     async def drop_collection(self, name: str) -> None:
@@ -191,17 +193,31 @@ async def test_embed_stage_attaches_vectors_by_chunk_order():
 
 
 @pytest.mark.asyncio
-async def test_store_stage_upserts_to_partition_collection():
+async def test_store_stage_upserts_to_default_collection_with_chunk_partitions():
     chunks = [Chunk(id="c1", text="alpha", embedding=[1.0])]
     store = FakeVectorStore(count=1)
     row = {"chunks": chunks, "partition": "tenant-a", "credentials": {"token": "secret"}}
 
     await store_stage(row, store)
 
-    assert store.calls == [(chunks, "tenant-a")]
+    assert store.ensure_calls == [("default", 1)]
+    assert store.calls == [(chunks, "default")]
     assert row["stored_count"] == 1
     assert row["stage"] == "stored"
     assert "credentials" not in row
+
+
+@pytest.mark.asyncio
+async def test_store_stage_rejects_chunks_without_embeddings():
+    chunks = [Chunk(id="c1", text="alpha")]
+    store = FakeVectorStore(count=0)
+    row = {"chunks": chunks}
+
+    with pytest.raises(ValueError, match="without embeddings"):
+        await store_stage(row, store)
+
+    assert store.calls == []
+    assert row["stage"] == "store_failed"
 
 
 @pytest.mark.asyncio

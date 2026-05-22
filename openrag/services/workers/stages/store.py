@@ -15,17 +15,25 @@ async def store_stage(
     timeout: float | None = None,
     per_chunk_timeout: float = 0.0,
 ) -> MutableMapping[str, Any]:
-    """Upsert ``row["chunks"]`` into the partition collection."""
+    """Upsert ``row["chunks"]`` into the configured vector collection.
+
+    Tenant routing stays on each chunk's ``partition`` field. The vector
+    store collection argument remains the configured backend collection.
+    """
 
     try:
         chunks = row.get("chunks")
         if not _is_chunk_list(chunks):
             raise ValueError("store_stage row must contain a list[Chunk] under 'chunks'")
+        if chunks:
+            embedding = chunks[0].embedding
+            if embedding is None:
+                raise ValueError("store_stage received chunks without embeddings")
+            await vector_store.ensure_collection("default", len(embedding))
 
-        collection = str(row.get("partition") or "default")
         effective_timeout = stage_timeout(timeout, len(chunks), per_item_timeout=per_chunk_timeout)
         row["stored_count"] = await run_with_optional_timeout(
-            lambda: vector_store.upsert(chunks, collection=collection),
+            lambda: vector_store.upsert(chunks),
             effective_timeout,
         )
         row["stage"] = "stored"

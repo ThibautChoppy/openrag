@@ -397,14 +397,12 @@ class ServiceContainer:
     def indexing_service(self) -> IndexingService:
         """IndexingService — lazily built, cached for the container's lifetime.
 
-        The dispatcher is the Ray-backed ``IndexerRayShim`` during the
-        Phase-8 shim period (Ray cleanup is Phase 9); it is resolved
-        lazily so the ``Indexer`` / ``TaskStateManager`` actors only need
-        to exist at first request, not at container construction.
+        Phase 9B routes new indexing jobs through the thin ``IndexerPool``
+        actor while delete/update/copy remain on the legacy actor path.
         """
         if self._indexing_service is None:
             from services.orchestrators.indexing_service import IndexingService
-            from services.storage.indexer_ray_shim import from_ray_namespace
+            from services.storage.worker_dispatcher import from_ray_namespace
 
             self._indexing_service = IndexingService(
                 document_repo=self.document_repo,

@@ -55,10 +55,14 @@ class FakeEmbedder:
 class FakeVectorStore:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.ensure_calls: list[tuple[str, int]] = []
 
     async def upsert(self, chunks: list[Chunk], collection: str = "default") -> int:
         self.calls.append((chunks, collection))
         return len(chunks)
+
+    async def ensure_collection(self, name: str, dimension: int, **kwargs) -> None:
+        self.ensure_calls.append((name, dimension))
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +315,10 @@ async def test_e2e_multiple_documents_pipeline_and_summary():
     assert summary.success_rate == pytest.approx(2 / 3)
     assert summary.failures[0].stage == "parse_failed"
     assert summary.failures[0].error == "unsupported document"
-    assert store.calls[0][1] == "tenant-a"
-    assert store.calls[1][1] == "tenant-b"
+    assert store.calls[0][1] == "default"
+    assert store.calls[1][1] == "default"
+    assert processed_rows[0]["chunks"][0].partition == "tenant-a"
+    assert processed_rows[2]["chunks"][0].partition == "tenant-b"
 
 
 def test_aggregate_all_failed():
