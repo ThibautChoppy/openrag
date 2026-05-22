@@ -39,7 +39,6 @@ from routers.users import router as users_router
 from routers.utils import require_admin
 from routers.workspaces import router as workspaces_router
 from starlette.middleware.base import BaseHTTPMiddleware
-from utils.dependencies import get_vectordb
 from utils.exceptions import OpenRAGError
 from utils.logger import get_logger
 
@@ -214,7 +213,10 @@ class TokenRedactingMiddleware(BaseHTTPMiddleware):
 
 
 # Register middlewares (order matters - last added runs first)
-app.add_middleware(AuthMiddleware, get_vectordb=get_vectordb)
+app.add_middleware(
+    AuthMiddleware,
+    get_auth_service=lambda request: request.app.state.container.auth_service,
+)
 app.add_middleware(TokenRedactingMiddleware)
 app.add_middleware(MonitoringMiddleware)
 
