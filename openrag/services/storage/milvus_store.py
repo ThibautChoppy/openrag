@@ -873,6 +873,59 @@ class MilvusVectorStore(VectorStore):
 
         return int(result.get("delete_count", 0)) if isinstance(result, dict) else 0
 
+    async def upsert_entities(self, entities: list[dict[str, Any]], collection: str = "default") -> int:
+        """Upsert raw Milvus entities that already include vector data.
+
+        This is intentionally narrower than the VectorStore port: it supports
+        file metadata patch/copy paths where re-embedding would be wrong and
+        the existing Milvus rows already carry the vectors to preserve.
+        """
+        self._resolve_collection(collection)
+        if not entities:
+            return 0
+
+        try:
+            result = await self._async_client.upsert(
+                collection_name=self._collection_name,
+                data=entities,
+            )
+        except MilvusException as e:
+            raise VDBInsertError(
+                f"Milvus raw entity upsert failed: {e!s}",
+                collection_name=self._collection_name,
+            ) from e
+        except Exception as e:
+            raise UnexpectedVDBError(
+                f"Unexpected error during Milvus raw entity upsert: {e!s}",
+                collection_name=self._collection_name,
+            ) from e
+
+        return int(result.get("upsert_count", len(entities))) if isinstance(result, dict) else len(entities)
+
+    async def insert_entities(self, entities: list[dict[str, Any]], collection: str = "default") -> int:
+        """Insert raw Milvus entities that already include vector data."""
+        self._resolve_collection(collection)
+        if not entities:
+            return 0
+
+        try:
+            result = await self._async_client.insert(
+                collection_name=self._collection_name,
+                data=entities,
+            )
+        except MilvusException as e:
+            raise VDBInsertError(
+                f"Milvus raw entity insert failed: {e!s}",
+                collection_name=self._collection_name,
+            ) from e
+        except Exception as e:
+            raise UnexpectedVDBError(
+                f"Unexpected error during Milvus raw entity insert: {e!s}",
+                collection_name=self._collection_name,
+            ) from e
+
+        return int(result.get("insert_count", len(entities))) if isinstance(result, dict) else len(entities)
+
     async def ensure_collection(self, name: str, dimension: int, **kwargs: Any) -> None:
         """Public entry point for materialising the backing collection.
 

@@ -11,21 +11,40 @@ DEFAULT_TIMEOUT = 60.0
 class WorkerDispatcher(IndexingDispatcher):
     """Dispatcher that routes new indexing jobs through ``IndexerPool``.
 
-    Delete, metadata update, and copy still use the legacy ``Indexer`` actor
-    until the remaining write operations are migrated to the worker pipeline.
+    File mutation paths use the storage ports directly so the API no longer
+    depends on the legacy ``Indexer`` actor being present.
     """
+
+    _FILE_METADATA_EXCLUDED_KEYS = frozenset(
+        {
+            "_id",
+            "id",
+            "text",
+            "vector",
+            "page",
+            "section_id",
+            "prev_section_id",
+            "next_section_id",
+        }
+    )
 
     def __init__(
         self,
         *,
         pool: Any,
-        indexer: Any,
         task_state_manager: Any,
+        vector_store: Any,
+        document_repo: Any,
+        workspace_repo: Any,
+        collection: str,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._pool = pool
-        self._indexer = indexer
         self._tsm = task_state_manager
+        self._vector_store = vector_store
+        self._document_repo = document_repo
+        self._workspace_repo = workspace_repo
+        self._collection = collection
         self._timeout = timeout
 
     async def _call(self, future: Any, task_description: str) -> Any:
@@ -83,10 +102,14 @@ class WorkerDispatcher(IndexingDispatcher):
         return task_id
 
     async def delete_file(self, file_id: str, partition: str) -> None:
-        await self._call(
-            self._indexer.delete_file.remote(file_id, partition),
-            task_description=f"delete_file({file_id})",
+        ids = await self._vector_store.query_ids_by_filter(
+            self._collection,
+            {"partition": partition, "file_id": file_id},
         )
+        if ids:
+            await self._vector_store.delete(ids, self._collection)
+        await self._workspace_repo.remove_file_from_all_workspaces(file_id, partition)
+        await self._document_repo.remove_file_from_partition(file_id=file_id, partition=partition)
 
     async def update_file_metadata(
         self,
@@ -95,10 +118,25 @@ class WorkerDispatcher(IndexingDispatcher):
         partition: str,
         user: dict | None,
     ) -> None:
-        await self._call(
-            self._indexer.update_file_metadata.remote(file_id, metadata, partition, user=user),
-            task_description=f"update_file_metadata({file_id})",
+        rows = await self._vector_store.query_chunks_by_filter(
+            self._collection,
+            {"partition": partition, "file_id": file_id},
+            output_fields=["*", "vector"],
         )
+        if not rows:
+            return
+
+        entities = []
+        for row in rows:
+            entity = dict(row)
+            entity.update(metadata)
+            entities.append(entity)
+
+        await self._upsert_entities(entities)
+
+        file_metadata = self._file_metadata_from_chunk(rows[0])
+        file_metadata.update(metadata)
+        await self._document_repo.update_file_metadata_in_db(file_id, partition, file_metadata)
 
     async def copy_file(
         self,
@@ -107,10 +145,50 @@ class WorkerDispatcher(IndexingDispatcher):
         partition: str,
         user: dict | None,
     ) -> None:
-        await self._call(
-            self._indexer.copy_file.remote(file_id=file_id, metadata=metadata, partition=partition, user=user),
-            task_description=f"copy_file({file_id})",
+        rows = await self._vector_store.query_chunks_by_filter(
+            self._collection,
+            {"partition": partition, "file_id": file_id},
+            output_fields=["*", "vector"],
         )
+        if not rows:
+            return
+
+        entities = []
+        for row in rows:
+            entity = dict(row)
+            entity.pop("_id", None)
+            entity.update(metadata)
+            entities.append(entity)
+
+        await self._insert_entities(entities)
+
+        target_file_id = metadata.get("file_id", file_id)
+        target_partition = metadata.get("partition", partition)
+        file_metadata = self._file_metadata_from_chunk(rows[0])
+        file_metadata.update(metadata)
+        await self._document_repo.add_file_to_partition(
+            file_id=target_file_id,
+            partition=target_partition,
+            file_metadata=file_metadata,
+            user_id=user.get("id") if user else None,
+            relationship_id=file_metadata.get("relationship_id"),
+            parent_id=file_metadata.get("parent_id"),
+        )
+
+    async def _upsert_entities(self, entities: list[dict[str, Any]]) -> None:
+        upsert_entities = getattr(self._vector_store, "upsert_entities", None)
+        if upsert_entities is None:
+            raise TypeError("vector_store must expose upsert_entities for file metadata mutations")
+        await upsert_entities(entities, self._collection)
+
+    async def _insert_entities(self, entities: list[dict[str, Any]]) -> None:
+        insert_entities = getattr(self._vector_store, "insert_entities", None)
+        if insert_entities is None:
+            raise TypeError("vector_store must expose insert_entities for file copy mutations")
+        await insert_entities(entities, self._collection)
+
+    def _file_metadata_from_chunk(self, chunk: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in chunk.items() if k not in self._FILE_METADATA_EXCLUDED_KEYS}
 
     async def get_task_state(self, task_id: str) -> str | None:
         return await self._call(
@@ -142,14 +220,25 @@ class WorkerDispatcher(IndexingDispatcher):
         return True
 
 
-def from_ray_namespace(namespace: str = "openrag", timeout: float = DEFAULT_TIMEOUT) -> WorkerDispatcher:
+def from_ray_namespace(
+    namespace: str = "openrag",
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    vector_store: Any,
+    document_repo: Any,
+    workspace_repo: Any,
+    collection: str,
+) -> WorkerDispatcher:
     import ray
     from services.workers.indexer_pool import build_indexer_pool
 
     return WorkerDispatcher(
         pool=build_indexer_pool(namespace=namespace),
-        indexer=ray.get_actor("Indexer", namespace=namespace),
         task_state_manager=ray.get_actor("TaskStateManager", namespace=namespace),
+        vector_store=vector_store,
+        document_repo=document_repo,
+        workspace_repo=workspace_repo,
+        collection=collection,
         timeout=timeout,
     )
 

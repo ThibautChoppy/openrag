@@ -405,10 +405,16 @@ class ServiceContainer:
             from services.orchestrators.indexing_service import IndexingService
             from services.storage.worker_dispatcher import from_ray_namespace
 
+            settings = self._require_settings()
             self._indexing_service = IndexingService(
                 document_repo=self.document_repo,
                 workspace_repo=self.workspace_repo,
-                dispatcher=from_ray_namespace(),
+                dispatcher=from_ray_namespace(
+                    vector_store=self.vector_store,
+                    document_repo=self.document_repo,
+                    workspace_repo=self.workspace_repo,
+                    collection=settings.vectordb.collection_name,
+                ),
             )
         return self._indexing_service
 
