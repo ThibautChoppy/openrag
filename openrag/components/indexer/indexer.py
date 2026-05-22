@@ -285,6 +285,3 @@ class Indexer:
         if isinstance(partition, list) and all(isinstance(p, str) for p in partition):
             return partition
         raise ValueError("Partition must be a string or a list of strings.")
-
-
-from services.workers.task_state import TaskInfo, TaskStateManager  # noqa: F401, E402
