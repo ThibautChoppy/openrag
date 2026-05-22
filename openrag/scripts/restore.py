@@ -52,9 +52,7 @@ def _add_file_to_partition(conn, file_id: str, partition: str, file_metadata: di
         )
     )
     conn.execute(
-        users_table.update()
-        .where(users_table.c.id == user_id)
-        .values(file_count=users_table.c.file_count + 1)
+        users_table.update().where(users_table.c.id == user_id).values(file_count=users_table.c.file_count + 1)
     )
     conn.commit()
     return True
@@ -305,7 +303,9 @@ def main():
     if args.verbose:
         logger.info(f"rdb @ {rdb.host}:{rdb.port} | vdb @ {vdb.host}:{vdb.port} | collection: {vdb.collection_name}")
 
-    database_url = f"postgresql://{rdb.user}:{rdb.password}@{rdb.host}:{rdb.port}/partitions_for_collection_{vdb.collection_name}"
+    database_url = (
+        f"postgresql://{rdb.user}:{rdb.password}@{rdb.host}:{rdb.port}/partitions_for_collection_{vdb.collection_name}"
+    )
 
     # List existing partitions
     try:

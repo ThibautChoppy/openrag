@@ -247,7 +247,9 @@ def main():
         logger.info(f"rdb @ {rdb.host}:{rdb.port} | vdb @ {vdb.host}:{vdb.port} | collection: {vdb.collection_name}")
 
     # List existing partitions
-    database_url = f"postgresql://{rdb.user}:{rdb.password}@{rdb.host}:{rdb.port}/partitions_for_collection_{vdb.collection_name}"
+    database_url = (
+        f"postgresql://{rdb.user}:{rdb.password}@{rdb.host}:{rdb.port}/partitions_for_collection_{vdb.collection_name}"
+    )
     try:
         engine = create_engine(database_url)
         with engine.connect() as conn:
