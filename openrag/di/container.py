@@ -136,6 +136,7 @@ class ServiceContainer:
         """Open the storage adapters (asyncpg pool + Alembic migrations)."""
         if self._catalog_store is not None:
             await self._catalog_store.initialize()
+            await self.user_repo.ensure_admin_user(os.getenv("AUTH_TOKEN"))
 
     async def shutdown(self) -> None:
         """Close the storage adapters cleanly."""
