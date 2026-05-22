@@ -443,7 +443,7 @@ class ServiceContainer:
         """
         if self._conversion_service is None:
             from services.orchestrators.conversion_service import ConversionService
-            from services.storage.serializer_ray_shim import from_ray_namespace
+            from services.workers.parsers.doc_serializer_adapter import from_ray_namespace
 
             settings = self._require_settings()
             self._conversion_service = ConversionService(
