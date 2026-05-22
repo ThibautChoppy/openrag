@@ -9,7 +9,6 @@ from typing import ClassVar
 from config import load_config
 from fast_langdetect import LangDetectConfig, LangDetector
 from langchain_core.documents.base import Document
-from langchain_openai import ChatOpenAI
 from services.inference.distributed_semaphore import (
     DistributedSemaphore,  # noqa: F401
     DistributedSemaphoreActor,  # noqa: F401
@@ -43,6 +42,8 @@ def get_num_tokens():
     global _cached_length_function
     if _cached_length_function is None:
         try:
+            from langchain_openai import ChatOpenAI
+
             llm = ChatOpenAI(**config.llm.model_dump())
             _cached_length_function = llm.get_num_tokens
         except Exception as exc:

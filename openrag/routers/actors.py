@@ -64,8 +64,6 @@ async def list_ray_actors():
 - `TaskStateManager`: Manages task states
 - `MarkerPool`: PDF processing actor pool
 - `SerializerQueue`: Document serialization queue
-- `Indexer`: Document indexing coordinator
-- `Vectordb`: Vector database interface
 - `llmSemaphore`: LLM request semaphore
 - `vlmSemaphore`: Vision LM request semaphore
 

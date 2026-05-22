@@ -6,7 +6,7 @@ from pathlib import Path
 
 import aiofiles
 import consts
-from components.utils import load_config
+from config import load_config
 from fastapi import HTTPException, UploadFile, status
 
 config = load_config()
