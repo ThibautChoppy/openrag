@@ -36,7 +36,7 @@ from components.auth import (
 )
 from core.models.user import OIDCSession, User
 from core.utils.exceptions import AuthError, OpenRAGError
-from utils.logger import get_logger
+from utils.logger import get_logger, mask_email
 
 if TYPE_CHECKING:
     from core.config.auth import OIDCConfig
@@ -607,14 +607,28 @@ class AuthService:
                 )
             )
         except Exception as e:
-            # Concurrent first-login race or DB failure — re-read; if still
-            # missing, surface a 500 so the operator notices.
+            # Concurrent first-login race or DB failure. Re-read by sub first;
+            # if an email collision caused the insert failure, return an
+            # actionable conflict instead of an opaque 500.
             logger.exception(f"OIDC auto-provisioning failed for sub={sub!r}: {e}")
             user = await self._user_repo.get_user_by_external_id(sub)
             if user is None:
+                if isinstance(email, str) and email.strip():
+                    existing = await self._user_repo.get_user_by_email(email)
+                    if existing is not None:
+                        logger.error(
+                            f"OIDC auto-provisioning blocked for sub={sub!r}: an account with email "
+                            f"{mask_email(email)} already exists under a different identity. Set that "
+                            f"user's external_user_id to this sub to allow login."
+                        )
+                        raise OIDCFlowError(
+                            "An account with this email already exists. Ask your administrator to "
+                            "link it to your identity provider login.",
+                            status_code=409,
+                        ) from e
                 raise OIDCFlowError("Failed to provision user", status_code=500) from e
         else:
-            logger.info(f"OIDC user auto-provisioned (id={user.id}, sub={sub!r}, display_name={display_name!r})")
+            logger.info(f"OIDC user auto-provisioned (id={user.id}, sub={sub!r})")
         return user
 
     async def _sync_auto_provisioned(
