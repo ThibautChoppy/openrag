@@ -34,7 +34,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _install_dependencies_stub() -> None:
+_STUBBED_MODULES = ("utils", "utils.dependencies", "utils.logger")
+
+
+def _install_dependencies_stub() -> dict[str, types.ModuleType | None]:
+    previous_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
+
     stub = types.ModuleType("utils.dependencies")
     stub.get_vectordb = lambda: None
     stub.get_task_state_manager = lambda: None
@@ -56,11 +61,25 @@ def _install_dependencies_stub() -> None:
 
     logger_stub = types.ModuleType("utils.logger")
     logger_stub.escape_markup = lambda s: s.replace("\\", "\\\\").replace("<", "\\<").replace(">", "\\>")
+    logger_stub.mask_email = (
+        lambda email: f"{email.partition('@')[0][0]}***@{email.partition('@')[2]}"
+        if isinstance(email, str) and "@" in email and email.partition("@")[0]
+        else "***"
+    )
     logger_stub.get_logger = _logger
     sys.modules["utils.logger"] = logger_stub
+    return previous_modules
 
 
-_install_dependencies_stub()
+def _restore_dependencies_stub(previous_modules: dict[str, types.ModuleType | None]) -> None:
+    for name, previous_module in previous_modules.items():
+        if previous_module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous_module
+
+
+_PREVIOUS_MODULES = _install_dependencies_stub()
 
 from di.providers import get_auth_service  # noqa: E402
 from routers.auth import router as auth_router  # noqa: E402
@@ -70,6 +89,8 @@ from services.orchestrators.auth_service import (  # noqa: E402
     LoginRedirect,
     OIDCFlowError,
 )
+
+_restore_dependencies_stub(_PREVIOUS_MODULES)
 
 STATE_COOKIE_NAME = "openrag_oidc_state"
 
