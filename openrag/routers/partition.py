@@ -1,13 +1,25 @@
+"""Partition routes — thin HTTP layer over :class:`PartitionService`.
+
+Phase 8B.1: partition CRUD, membership, file/chunk reads and the
+relationship queries moved to
+``services.orchestrators.partition_service.PartitionService``. This
+module keeps HTTP transport only: request-scoped authorization (the
+shared ``Depends`` wrappers in ``routers/utils.py``), ``request.url_for``
+link building, and the conflict / not-found guards whose exact
+non-bracketed ``{"detail": ...}`` body the legacy endpoints returned via
+``HTTPException``.
+"""
+
 from typing import Literal
 from urllib.parse import quote
 
+from di.providers import get_partition_service
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from utils.dependencies import get_vectordb
+from services.orchestrators.partition_service import PartitionService
 from utils.logger import get_logger
 
 from .utils import (
-    ROLE_HIERARCHY,
     partitions_with_details,
     require_partition_owner,
     require_partition_viewer,
@@ -16,7 +28,7 @@ from .utils import (
 logger = get_logger()
 router = APIRouter()
 
-RoleType = Literal[*list(ROLE_HIERARCHY.keys())]
+RoleType = Literal["viewer", "editor", "owner"]
 
 
 def _quote_param_value(s: str) -> str:
@@ -37,11 +49,11 @@ Returns a list of partitions you have access to, including:
 """,
 )
 async def list_existant_partitions(
-    vectordb=Depends(get_vectordb),
     partitions=Depends(partitions_with_details),
+    service: PartitionService = Depends(get_partition_service),
 ):
     if len(partitions) == 1 and partitions[0]["partition"] == "all":
-        partitions = await vectordb.list_partitions.remote()
+        partitions = await service.list_partitions()
     logger.debug("Returned list of existing partitions.", partition_count=len(partitions))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"partitions": partitions})
 
@@ -65,11 +77,10 @@ Returns 204 No Content on successful deletion.
 )
 async def delete_partition(
     partition: str,
-    vectordb=Depends(get_vectordb),
     partition_owner=Depends(require_partition_owner),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    await vectordb.delete_partition.remote(partition)
-    logger.debug("Partition successfully deleted.")
+    await service.delete_partition(partition)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -96,13 +107,10 @@ async def list_files(
     request: Request,
     partition: str,
     limit: int | None = None,
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    log = logger.bind(partition=partition)
-    file_obj_l = await vectordb.list_partition_files.remote(partition=partition, limit=limit)
-    file_dicts = file_obj_l.get("files", [])
-    log.debug("Listed files in partition", file_count=len(file_dicts))
+    file_dicts = await service.list_files(partition, limit)
 
     def process_file(file_dict):
         return {
@@ -145,19 +153,17 @@ async def get_file(
     partition: str,
     file_id: str,
     limit: int = 2000,
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    if not await vectordb.file_exists.remote(file_id, partition):
+    if not await service.file_exists(file_id, partition):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{file_id}' not found in partition '{partition}'",
         )
-    results = await vectordb.get_file_chunks.remote(partition=partition, file_id=file_id, include_id=True, limit=limit)
-
-    documents = [{"link": str(request.url_for("get_extract", extract_id=doc.metadata["_id"]))} for doc in results]
-
-    metadata = {k: v for k, v in results[0].metadata.items() if k != "_id"} if results else {}
+    rows = await service.get_file_chunks(partition=partition, file_id=file_id, limit=limit)
+    documents = [{"link": str(request.url_for("get_extract", extract_id=row["_id"]))} for row in rows]
+    metadata = {k: v for k, v in rows[0].items() if k != "_id"} if rows else {}
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
@@ -190,17 +196,17 @@ async def list_all_chunks(
     request: Request,
     partition: str,
     include_embedding: bool = True,
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    chunks = await vectordb.list_all_chunk.remote(partition=partition, include_embedding=include_embedding)
+    items = await service.list_all_chunks(partition=partition, include_embedding=include_embedding)
     chunks = [
         {
-            "link": str(request.url_for("get_extract", extract_id=chunk.metadata["_id"])),
-            "content": chunk.page_content,
-            "metadata": chunk.metadata,
+            "link": str(request.url_for("get_extract", extract_id=it["metadata"]["_id"])),
+            "content": it["content"],
+            "metadata": it["metadata"],
         }
-        for chunk in chunks
+        for it in items
     ]
     return JSONResponse(status_code=status.HTTP_200_OK, content={"chunks": chunks})
 
@@ -224,14 +230,18 @@ Returns 201 Created on successful creation.
 Returns 409 Conflict if partition already exists.
 """,
 )
-async def create_partition(request: Request, partition: str, vectordb=Depends(get_vectordb)):
-    if await vectordb.partition_exists.remote(partition):
+async def create_partition(
+    request: Request,
+    partition: str,
+    service: PartitionService = Depends(get_partition_service),
+):
+    if await service.partition_exists(partition):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Partition '{partition}' already exists.",
         )
     user_id = request.state.user["id"]
-    await vectordb.create_partition.remote(partition=partition, user_id=user_id)
+    await service.create_partition(partition=partition, user_id=user_id)
     return Response(status_code=status.HTTP_201_CREATED)
 
 
@@ -259,17 +269,11 @@ Returns list of partition members with:
 )
 async def list_partition_users(
     partition: str,
-    vectordb=Depends(get_vectordb),
     partition_owner=Depends(require_partition_owner),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    """
-    List all users who are members of the given partition.
-    """
-    log = logger.bind(partition=partition)
-
-    members = await vectordb.list_partition_members.remote(partition=partition)
-
-    log.debug("Returned list of partition members.", member_count=len(members))
+    """List all users who are members of the given partition."""
+    members = await service.list_members(partition=partition)
     return JSONResponse(status_code=status.HTTP_200_OK, content={"members": members})
 
 
@@ -298,17 +302,11 @@ async def add_partition_user(
     partition: str,
     user_id: int = Form(...),
     role: RoleType = Form("viewer"),
-    vectordb=Depends(get_vectordb),
     partition_owner=Depends(require_partition_owner),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    """
-    Add a user as a member of the given partition.
-    """
-    log = logger.bind(partition=partition, user_id=user_id)
-
-    await vectordb.add_partition_member.remote(partition=partition, user_id=user_id, role=role)
-
-    log.debug("User added to partition successfully")
+    """Add a user as a member of the given partition."""
+    await service.add_member(partition=partition, user_id=user_id, role=role)
     return Response(status_code=status.HTTP_201_CREATED)
 
 
@@ -335,17 +333,11 @@ Returns 204 No Content on successful removal.
 async def remove_partition_user(
     partition: str,
     user_id: int,
-    vectordb=Depends(get_vectordb),
     partition_owner=Depends(require_partition_owner),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    """
-    Remove a user from the given partition.
-    """
-    log = logger.bind(partition=partition, user_id=user_id)
-
-    await vectordb.remove_partition_member.remote(partition=partition, user_id=user_id)
-
-    log.debug("User removed from partition successfully")
+    """Remove a user from the given partition."""
+    await service.remove_member(partition=partition, user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -374,17 +366,11 @@ async def update_partition_user_role(
     partition: str,
     user_id: int,
     role: RoleType = Form(...),
-    vectordb=Depends(get_vectordb),
     partition_owner=Depends(require_partition_owner),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    """
-    Update a user's role in the given partition.
-    """
-    log = logger.bind(partition=partition, user_id=user_id, role=role)
-
-    await vectordb.update_partition_member_role.remote(partition=partition, user_id=user_id, new_role=role)
-
-    log.debug("User role updated successfully")
+    """Update a user's role in the given partition."""
+    await service.update_role(partition=partition, user_id=user_id, new_role=role)
     return Response(status_code=status.HTTP_200_OK)
 
 
@@ -413,19 +399,13 @@ Returns all files that share the same relationship_id:
 """,
 )
 async def get_related_files(
-    request: Request,
     partition: str,
     relationship_id: str,
-    vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    log = logger.bind(partition=partition, relationship_id=relationship_id)
-    files = await vectordb.get_files_by_relationship.remote(partition=partition, relationship_id=relationship_id)
-    log.debug("Listed related files", file_count=len(files))
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"files": files},
-    )
+    files = await service.get_related_files(partition=partition, relationship_id=relationship_id)
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"files": files})
 
 
 @router.get(
@@ -455,26 +435,18 @@ For email threads with parallel branches, each branch has its own ancestor path.
 """,
 )
 async def get_file_ancestors(
-    request: Request,
     partition: str,
     file_id: str,
-    max_ancestor_depth: int | None = None,  # Optional limit on ancestor depth
-    vectordb=Depends(get_vectordb),
+    max_ancestor_depth: int | None = None,
     partition_viewer=Depends(require_partition_viewer),
+    service: PartitionService = Depends(get_partition_service),
 ):
-    log = logger.bind(partition=partition, file_id=file_id)
-
-    if not await vectordb.file_exists.remote(file_id, partition):
+    if not await service.file_exists(file_id, partition):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"'{file_id}' not found in partition '{partition}'",
         )
-
-    ancestors = await vectordb.get_file_ancestors.remote(
+    ancestors = await service.get_file_ancestors(
         partition=partition, file_id=file_id, max_ancestor_depth=max_ancestor_depth
     )
-    log.debug("Listed file ancestors", ancestor_count=len(ancestors))
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"ancestors": ancestors},
-    )
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"ancestors": ancestors})

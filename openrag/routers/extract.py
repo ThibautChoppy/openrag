@@ -1,13 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+"""Extract route — thin HTTP layer over :class:`ConversionService`.
+
+Phase 8E: the chunk-by-id lookup moved to
+``services.orchestrators.conversion_service.ConversionService`` (clean
+``VectorStore`` port, no Ray). This module keeps HTTP transport only:
+the request-scoped partition authorization and the not-found / forbidden
+guards whose exact ``{"detail": ...}`` body the legacy endpoint
+returned via ``HTTPException``.
+"""
+
+from di.providers import get_conversion_service
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from utils.dependencies import get_vectordb
+from services.orchestrators.conversion_service import ConversionService
 from utils.logger import get_logger
 
 from .utils import current_user_or_admin_partitions_list
 
 logger = get_logger()
 
-# Create an APIRouter instance
 router = APIRouter()
 
 
@@ -39,21 +49,26 @@ View detailed content of a specific chunk from search results.
 """,
 )
 async def get_extract(
-    request: Request,
     extract_id: str,
-    vectordb=Depends(get_vectordb),
     user_partitions=Depends(current_user_or_admin_partitions_list),
+    service: ConversionService = Depends(get_conversion_service),
 ):
     log = logger.bind(extract_id=extract_id)
 
-    chunk = await vectordb.get_chunk_by_id.remote(extract_id)
+    chunk = await service.get_chunk(extract_id)
     if chunk is None:
         log.warning("Extract not found.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Extract '{extract_id}' not found.",
         )
-    chunk_partition = chunk.metadata["partition"]
+    chunk_partition = chunk.get("metadata", {}).get("partition")
+    if not chunk_partition:
+        log.warning("Extract metadata missing partition.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Extract '{extract_id}' not found.",
+        )
     log.info(f"User partitions: {user_partitions}, Chunk partition: {chunk_partition}")
     if chunk_partition not in user_partitions and user_partitions != ["all"]:
         log.warning("User does not have access to this extract.")
@@ -65,5 +80,5 @@ async def get_extract(
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"page_content": chunk.page_content, "metadata": chunk.metadata},
+        content={"page_content": chunk["page_content"], "metadata": chunk["metadata"]},
     )

@@ -139,13 +139,13 @@ docker compose ps milvus
   <TabItem label="GPU">
 ```bash
 docker compose run --no-deps --rm --build --entrypoint "" openrag \
-    uv run python scripts/migrations/milvus/migrate.py --dry-run
+    uv run python services/persistence/migrations/milvus/migrate.py --dry-run
 ```
   </TabItem>
   <TabItem label="CPU">
 ```bash
 docker compose --profile cpu run --no-deps --rm --build --entrypoint "" openrag-cpu \
-    uv run python scripts/migrations/milvus/migrate.py --dry-run
+    uv run python services/persistence/migrations/milvus/migrate.py --dry-run
 ```
   </TabItem>
 </Tabs>
@@ -158,13 +158,13 @@ Review the output to confirm which migrations are pending and what changes they 
   <TabItem label="GPU">
 ```bash
 docker compose run --no-deps --rm --entrypoint "" openrag \
-    uv run python scripts/migrations/milvus/migrate.py
+    uv run python services/persistence/migrations/milvus/migrate.py
 ```
   </TabItem>
   <TabItem label="CPU">
 ```bash
 docker compose --profile cpu run --no-deps --rm --entrypoint "" openrag-cpu \
-    uv run python scripts/migrations/milvus/migrate.py
+    uv run python services/persistence/migrations/milvus/migrate.py
 ```
   </TabItem>
 </Tabs>
@@ -198,22 +198,22 @@ To upgrade or downgrade to a specific schema version rather than the latest:
 ```bash
 # Upgrade to version 2 only
 docker compose run --no-deps --rm --entrypoint "" openrag \
-    uv run python scripts/migrations/milvus/migrate.py --target 2
+    uv run python services/persistence/migrations/milvus/migrate.py --target 2
 
 # Downgrade to version 0 (resets version stamp and drops indexes)
 docker compose run --no-deps --rm --entrypoint "" openrag \
-    uv run python scripts/migrations/milvus/migrate.py --downgrade --target 0
+    uv run python services/persistence/migrations/milvus/migrate.py --downgrade --target 0
 ```
   </TabItem>
   <TabItem label="CPU">
 ```bash
 # Upgrade to version 2 only
 docker compose --profile cpu run --no-deps --rm --entrypoint "" openrag-cpu \
-    uv run python scripts/migrations/milvus/migrate.py --target 2
+    uv run python services/persistence/migrations/milvus/migrate.py --target 2
 
 # Downgrade to version 0 (resets version stamp and drops indexes)
 docker compose --profile cpu run --no-deps --rm --entrypoint "" openrag-cpu \
-    uv run python scripts/migrations/milvus/migrate.py --downgrade --target 0
+    uv run python services/persistence/migrations/milvus/migrate.py --downgrade --target 0
 ```
   </TabItem>
 </Tabs>
@@ -226,13 +226,13 @@ Milvus does not support dropping fields. A downgrade only removes indexes and re
   <TabItem label="GPU">
 ```bash
 docker compose run --no-deps --rm --entrypoint "" openrag \
-    uv run python scripts/migrations/milvus/migrate.py --downgrade
+    uv run python services/persistence/migrations/milvus/migrate.py --downgrade
 ```
   </TabItem>
   <TabItem label="CPU">
 ```bash
 docker compose --profile cpu run --no-deps --rm --entrypoint "" openrag-cpu \
-    uv run python scripts/migrations/milvus/migrate.py --downgrade
+    uv run python services/persistence/migrations/milvus/migrate.py --downgrade
 ```
   </TabItem>
 </Tabs>
@@ -243,14 +243,14 @@ To fully remove the fields you would need to recreate the collection from scratc
 
 ## Adding a New Migration Script
 
-Migration scripts live in `openrag/scripts/migrations/milvus/`. The runner discovers them automatically — no registration step required.
+Migration scripts live in `openrag/services/persistence/migrations/milvus/`. The runner discovers them automatically — no registration step required.
 
 ### Naming convention
 
 Files must follow the pattern `N.short_description.py`, where `N` is the **target schema version** as a positive integer:
 
 ```
-openrag/scripts/migrations/milvus/
+openrag/services/persistence/migrations/milvus/
   1.add_temporal_fields.py    ← brings the schema to version 1
   2.your_new_migration.py     ← brings the schema to version 2
   migrate.py                  ← generic runner (do not rename)

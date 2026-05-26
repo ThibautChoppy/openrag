@@ -10,10 +10,11 @@ def make_doc(doc_id: str, content: str = "", **metadata) -> Document:
 
 
 class TestRrfRerankingSingleList:
-    def test_single_list_returned_as_is(self):
+    def test_single_list_returned_as_list_copy(self):
         docs = [make_doc("a"), make_doc("b"), make_doc("c")]
         result = BaseReranker.rrf_reranking([docs])
-        assert result is docs
+        assert result == docs
+        assert result is not docs
 
 
 class TestRrfRerankingMultipleLists:

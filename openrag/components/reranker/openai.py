@@ -1,7 +1,13 @@
+"""Backward-compatibility shim — delegates to services.inference.reranker_clients.
+
+All new code should import directly from ``services.inference.reranker_clients``.
+"""
+
 import asyncio
 
 import httpx
 from langchain_core.documents.base import Document
+from services.inference.reranker_clients import OpenAIReranker as OpenAIRerankerAdapter  # noqa: F401
 from utils.logger import get_logger
 
 from .base import BaseReranker
@@ -10,6 +16,8 @@ logger = get_logger()
 
 
 class OpenAIReranker(BaseReranker):
+    """Legacy OpenAIReranker. New code should use OpenAIRerankerAdapter (via DI)."""
+
     def __init__(self, config):
         self.model_name = config.reranker.model_name
         base_url = config.reranker.base_url.rstrip("/")

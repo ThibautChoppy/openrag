@@ -1,9 +1,15 @@
+"""Backward-compatibility shim — delegates to services.inference.reranker_clients.
+
+All new code should import directly from ``services.inference.reranker_clients``.
+"""
+
 import asyncio
 
 from infinity_client import Client
 from infinity_client.api.default import rerank
 from infinity_client.models import RerankInput, ReRankResult
 from langchain_core.documents.base import Document
+from services.inference.reranker_clients import InfinityReranker as InfinityRerankerAdapter  # noqa: F401
 from utils.logger import get_logger
 
 from .base import BaseReranker
@@ -12,6 +18,8 @@ logger = get_logger()
 
 
 class InfinityReranker(BaseReranker):
+    """Legacy InfinityReranker. New code should use InfinityRerankerAdapter (via DI)."""
+
     def __init__(self, config):
         self.model_name = config.reranker.model_name
         self.client = Client(
@@ -33,7 +41,7 @@ class InfinityReranker(BaseReranker):
                     "documents": [doc.page_content for doc in documents],
                     "top_n": top_k,
                     "return_documents": True,
-                    "raw_scores": True,  # Normalized score between 0 and 1
+                    "raw_scores": True,
                 }
             )
             try:

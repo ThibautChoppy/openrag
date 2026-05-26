@@ -1,3 +1,16 @@
+"""OpenAI-compatible RAG endpoints — thin HTTP layer over QueryService.
+
+Phase 8C.2: the RAG flow (query generation, retrieval, web search,
+map-reduce, context/prompt assembly, streaming, and the
+``[Sources: N]`` citation filtering) moved to
+``services.orchestrators.query_service.QueryService``. This module keeps
+HTTP transport only: model→partition resolution, token-limit validation,
+the OpenAI ``/models`` listing, request-bound source-link building
+(``__prepare_sources`` uses ``request.url_for`` so it stays here and is
+handed to the service as a callable), and ``StreamingResponse`` /
+``JSONResponse`` wrapping with the SSE error envelope.
+"""
+
 import asyncio
 import json
 from pathlib import Path
@@ -5,19 +18,14 @@ from urllib.parse import quote, urlparse
 
 import consts
 from components.indexer.utils.text_sanitizer import sanitize_text
-from components.pipeline import RagPipeline
-from components.utils import (
-    extract_and_strip_sources_block,
-    filter_sources_by_citations,
-    get_num_tokens,
-    stream_with_source_filtering,
-)
+from components.utils import get_num_tokens
 from config import load_config
+from di.providers import get_partition_service, get_query_service
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.documents.base import Document
 from models.openai import OpenAIChatCompletionRequest, OpenAICompletionRequest
-from utils.dependencies import get_vectordb
+from services.orchestrators.partition_service import PartitionService
+from services.orchestrators.query_service import QueryService
 from utils.exceptions.base import OpenRAGError
 from utils.logger import get_logger
 
@@ -35,8 +43,6 @@ logger = get_logger()
 config = load_config()
 router = APIRouter()
 
-ragpipe = RagPipeline()
-
 # Cached max model token limit, populated at startup
 _max_model_tokens: int | None = None
 
@@ -49,14 +55,7 @@ async def _cache_max_model_tokens():
 
 def _make_sse_error(message: str, code: str) -> str:
     """Format an error as an SSE data chunk for streaming responses."""
-    chunk = {
-        "error": {
-            "message": message,
-            "type": "error",
-            "param": None,
-            "code": code,
-        }
-    }
+    chunk = {"error": {"message": message, "type": "error", "param": None, "code": code}}
     return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"
 
 
@@ -81,37 +80,27 @@ Returns models in OpenAI-compatible format with:
     response_description="A list of available models in OpenAI format",
 )
 async def list_models(
-    vectordb=Depends(get_vectordb),
     user_partitions=Depends(current_user_or_admin_partitions),
+    partitions: PartitionService = Depends(get_partition_service),
 ):
     if [p["partition"] for p in user_partitions] == ["all"]:
-        user_partitions = await vectordb.list_partitions.remote()
+        user_partitions = await partitions.list_partitions()
     logger.debug("Listing models", partition_count=len(user_partitions))
 
-    models = []
-    for partition in user_partitions:
-        model_id = f"{consts.PARTITION_PREFIX}{partition['partition']}"
-        models.append(
-            {
-                "id": model_id,
-                "object": "model",
-                "created": partition["created_at"],
-                "owned_by": "OpenRAG",
-            }
-        )
-
-    models.append(
+    models = [
         {
-            "id": f"{consts.PARTITION_PREFIX}all",
+            "id": f"{consts.PARTITION_PREFIX}{partition['partition']}",
             "object": "model",
-            "created": 0,
+            "created": partition["created_at"],
             "owned_by": "OpenRAG",
         }
-    )
+        for partition in user_partitions
+    ]
+    models.append({"id": f"{consts.PARTITION_PREFIX}all", "object": "model", "created": 0, "owned_by": "OpenRAG"})
     return JSONResponse(content={"object": "list", "data": models})
 
 
-def __prepare_sources(request: Request, docs: list[Document], web_results: list | None = None):
+def __prepare_sources(request: Request, docs: list, web_results: list | None = None):
     links = []
     for doc in docs:
         doc_metadata = dict(doc.metadata)
@@ -144,18 +133,14 @@ def __prepare_sources(request: Request, docs: list[Document], web_results: list 
 def is_direct_llm_model(
     request: OpenAIChatCompletionRequest | OpenAICompletionRequest,
 ) -> bool:
-    """Check if request should use direct LLM (no RAG partition).
-
-    Returns True if model is None, empty, or matches the configured default model.
-    """
+    """True if the request should use the LLM directly (no RAG partition)."""
     return request.model is None or request.model == "" or request.model == config.llm.model
 
 
 async def _fetch_max_model_tokens() -> int:
-    """Fetch the maximum model token limit from vLLM's OpenAI server.
+    """Fetch the max model token limit from vLLM's OpenAI server.
 
-    Queries `/v1/models` and looks for `max_model_len` for the configured LLM model.
-    Falls back to `config.llm_context.max_llm_context_size` (default 8192) if unavailable.
+    Falls back to ``config.llm_context.max_llm_context_size`` if unavailable.
     """
     default_limit = int(config.llm_context.max_llm_context_size)
     model_id = config.llm.model
@@ -165,17 +150,13 @@ async def _fetch_max_model_tokens() -> int:
         if model is None:
             logger.warning(f"No model found for {model_id}. Using default context size.")
             return default_limit
-
         model_data = model.model_dump() if hasattr(model, "model_dump") else model.dict()
         max_len = model_data.get("max_model_len") or model_data.get("model_extra", {}).get("max_model_len")
-
         if max_len is None:
             logger.warning(f"max_model_len not found for {model_id}. Using default context size.")
             return default_limit
-
         logger.info("Fetched max_model_len from vLLM at startup", model=model_id, max_model_len=int(max_len))
         return int(max_len)
-
     except Exception as e:
         logger.warning("Failed to query /v1/models for max_model_len; using default", error=str(e))
         return default_limit
@@ -192,15 +173,7 @@ def validate_tokens_limit(
     request: OpenAIChatCompletionRequest | OpenAICompletionRequest,
     max_tokens_allowed: int,
 ) -> tuple[bool, str]:
-    """Validate if the request respects the maximum token limit.
-
-    Args:
-        request: The OpenAI request object
-        max_tokens_allowed: Maximum allowed tokens for the request.
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
+    """Validate if the request respects the maximum token limit."""
     try:
         _length_function = get_num_tokens()
 
@@ -209,15 +182,6 @@ def validate_tokens_limit(
             default_output_tokens = int(config.llm_context.max_output_tokens)
             requested_tokens = request.max_tokens or default_output_tokens
             total_tokens_needed = message_tokens + requested_tokens
-
-            logger.debug(
-                "Token validation for chat completion",
-                message_tokens=message_tokens,
-                requested_tokens=requested_tokens,
-                total_tokens=total_tokens_needed,
-                max_allowed=max_tokens_allowed,
-            )
-
             if total_tokens_needed > max_tokens_allowed:
                 return False, (
                     f"Request exceeds maximum token limit. "
@@ -232,15 +196,6 @@ def validate_tokens_limit(
             default_output_tokens = int(config.llm_context.max_output_tokens)
             requested_tokens = request.max_tokens or default_output_tokens
             total_tokens_needed = prompt_tokens + requested_tokens
-
-            logger.debug(
-                "Token validation for completion",
-                prompt_tokens=prompt_tokens,
-                requested_tokens=requested_tokens,
-                total_tokens=total_tokens_needed,
-                max_allowed=max_tokens_allowed,
-            )
-
             if total_tokens_needed > max_tokens_allowed:
                 return False, (
                     f"Request exceeds maximum token limit. "
@@ -251,7 +206,6 @@ def validate_tokens_limit(
                 )
 
         return True, ""
-
     except Exception as e:
         logger.warning("Error during token validation, skipping check", error=str(e))
         return True, ""
@@ -262,8 +216,7 @@ def check_tokens_limit(
     log,
 ):
     """Validate token limit and raise HTTPException(413) if exceeded."""
-    max_tokens_allowed = get_max_model_tokens()
-    is_valid, error_message = validate_tokens_limit(request, max_tokens_allowed=max_tokens_allowed)
+    is_valid, error_message = validate_tokens_limit(request, max_tokens_allowed=get_max_model_tokens())
     if not is_valid:
         log.info("Request exceeds token limit", detail=error_message)
         raise HTTPException(
@@ -289,12 +242,6 @@ Accepts OpenAI-compatible chat completion requests with:
 - `stream`: Optional streaming response (true/false)
 - Standard OpenAI parameters (temperature, max_tokens, etc.)
 
-**RAG Process:**
-1. Extracts query from conversation
-2. Retrieves relevant documents from specified partition(s)
-3. Enriches prompt with document context
-4. Generates completion using LLM
-
 **Response:**
 Returns OpenAI-compatible response with additional `extra` field containing:
 - `sources`: Array of source documents with metadata and URLs
@@ -309,6 +256,8 @@ async def openai_chat_completion(
     user=Depends(current_user),
     user_partitions=Depends(current_user_or_admin_partitions_list),
     _: None = Depends(check_llm_model_availability),
+    service: QueryService = Depends(get_query_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     model_name = request.model or config.llm.model
     log = logger.bind(model=model_name, endpoint="/chat/completions")
@@ -320,28 +269,33 @@ async def openai_chat_completion(
             detail="The last message must be a non-empty user message",
         )
 
-    log.debug(
-        "Received chat completion request with messages: {}",
-        truncate(str(request.messages)),
-    )
+    log.debug("Received chat completion request with messages: {}", truncate(str(request.messages)))
 
     if is_direct_llm_model(request):
         check_tokens_limit(request, log)
         partitions = None
     else:
-        partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
+        partitions = await get_partition_name(
+            model_name,
+            user_partitions,
+            partition_service=partition_service,
+            is_admin=user["is_admin"],
+        )
         log.debug(f"Using partitions: {partitions}")
 
-    llm_output, docs, web_results = await ragpipe.chat_completion(partition=partitions, payload=request.model_dump())
-    log.debug("RAG chat completion pipeline executed.")
-
-    sources = __prepare_sources(request2, docs, web_results=web_results)
+    def prep(docs, web):
+        return __prepare_sources(request2, docs, web)
 
     if request.stream:
 
         async def stream_response():
             try:
-                async for sse_line in stream_with_source_filtering(llm_output, sources, model_name):
+                async for sse_line in service.chat_stream(
+                    partitions=partitions,
+                    payload=request.model_dump(),
+                    prepare_sources=prep,
+                    model_name=model_name,
+                ):
                     yield sse_line
             except asyncio.CancelledError:
                 log.info("Client disconnected during streaming")
@@ -354,18 +308,15 @@ async def openai_chat_completion(
                 yield _make_sse_error("An unexpected error occurred during streaming", "UNEXPECTED_ERROR")
 
         return StreamingResponse(stream_response(), media_type="text/event-stream")
-    else:
-        chunk = await llm_output.__anext__()
-        chunk["model"] = model_name
 
-        content = chunk.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-        clean_content, citations = extract_and_strip_sources_block(content)
-        chunk["choices"][0]["message"]["content"] = clean_content
-
-        filtered = filter_sources_by_citations(sources, citations)
-        chunk["extra"] = json.dumps({"sources": filtered})
-        log.debug("Returning non-streaming completion chunk.")
-        return JSONResponse(content=chunk)
+    chunk = await service.chat(
+        partitions=partitions,
+        payload=request.model_dump(),
+        prepare_sources=prep,
+        model_name=model_name,
+    )
+    log.debug("Returning non-streaming completion chunk.")
+    return JSONResponse(content=chunk)
 
 
 @router.post(
@@ -384,11 +335,6 @@ Accepts OpenAI-compatible completion requests with:
 - `model`: Model/partition to use
 - Standard OpenAI parameters (temperature, max_tokens, etc.)
 
-**RAG Process:**
-1. Retrieves relevant documents from specified partition(s)
-2. Enriches prompt with document context
-3. Generates completion using LLM
-
 **Response:**
 Returns OpenAI-compatible response with additional `extra` field containing:
 - `sources`: Array of source documents with metadata and URLs
@@ -402,16 +348,15 @@ async def openai_completion(
     user=Depends(current_user),
     user_partitions=Depends(current_user_or_admin_partitions_list),
     _: None = Depends(check_llm_model_availability),
+    service: QueryService = Depends(get_query_service),
+    partition_service: PartitionService = Depends(get_partition_service),
 ):
     model_name = request.model or config.llm.model
     log = logger.bind(model=model_name, endpoint="/completions")
 
     if not request.prompt:
         log.warning("Prompt is missing.")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The prompt is required",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The prompt is required")
 
     if request.stream:
         log.warning("Streaming not supported for this endpoint.")
@@ -424,20 +369,17 @@ async def openai_completion(
         check_tokens_limit(request, log)
         partitions = None
     else:
-        partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
+        partitions = await get_partition_name(
+            model_name,
+            user_partitions,
+            partition_service=partition_service,
+            is_admin=user["is_admin"],
+        )
 
-    llm_output, docs = await ragpipe.completions(partition=partitions, payload=request.model_dump())
-    log.debug("RAG completion pipeline executed.")
-
-    sources = __prepare_sources(request2, docs)
-
-    complete_response = await llm_output.__anext__()
-
-    text = complete_response.get("choices", [{}])[0].get("text", "") or ""
-    clean_text, citations = extract_and_strip_sources_block(text)
-    complete_response["choices"][0]["text"] = clean_text
-
-    filtered = filter_sources_by_citations(sources, citations)
-    complete_response["extra"] = json.dumps({"sources": filtered})
+    resp = await service.complete(
+        partitions=partitions,
+        payload=request.model_dump(),
+        prepare_sources=lambda docs, _web: __prepare_sources(request2, docs),
+    )
     log.debug("Returning completion response.")
-    return JSONResponse(content=complete_response)
+    return JSONResponse(content=resp)

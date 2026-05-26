@@ -5,12 +5,13 @@ import re
 import threading
 from typing import ClassVar
 
-import ray
-from components.indexer.utils.text_sanitizer import sanitize_text
 from config import load_config
 from fast_langdetect import LangDetectConfig, LangDetector
 from langchain_core.documents.base import Document
-from langchain_openai import ChatOpenAI
+from services.inference.distributed_semaphore import (
+    DistributedSemaphore,  # noqa: F401
+    DistributedSemaphoreActor,  # noqa: F401
+)
 from utils.logger import get_logger
 
 SOURCE_SEPARATOR = "-" * 10 + "\n\n"
@@ -33,92 +34,56 @@ class SingletonMeta(type):
         return cls._instances[cls]
 
 
-@ray.remote(max_restarts=5, max_concurrency=config.ray.semaphore.concurrency)
-class DistributedSemaphoreActor:
-    def __init__(self, max_concurrent_ops: int):
-        self.semaphore = asyncio.Semaphore(max_concurrent_ops)
-
-    async def acquire(self):
-        await self.semaphore.acquire()
-
-    def release(self):
-        self.semaphore.release()
-
-
-class DistributedSemaphore:
-    # https://chat.deepseek.com/a/chat/s/890dbcc0-2d3f-4819-af9d-774b892905bc
-    def __init__(
-        self,
-        name: str = "llmSemaphore",
-        namespace="openrag",
-        max_concurrent_ops: int = 10,
-    ):
-        self._name = name
-        self._namespace = namespace
-        self._max_concurrent_ops = max_concurrent_ops
-
-    def _get_or_create_actor(self):
-        try:
-            # reuse existing actor if it exists
-            _actor = ray.get_actor(self._name, namespace=self._namespace)
-        except ValueError:
-            # create new actor if it doesn't exist
-            _actor = DistributedSemaphoreActor.options(
-                name=self._name,
-                namespace=self._namespace,
-                lifetime="detached",
-            ).remote(self._max_concurrent_ops)
-        except Exception:
-            raise
-
-        return _actor
-
-    async def __aenter__(self):
-        semaphore_actor = self._get_or_create_actor()
-        await semaphore_actor.acquire.remote()
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        semaphore_actor = self._get_or_create_actor()
-        await semaphore_actor.release.remote()
-
-
 _cached_length_function = None
 
 
 def get_num_tokens():
     global _cached_length_function
     if _cached_length_function is None:
-        llm = ChatOpenAI(**config.llm.model_dump())
-        _cached_length_function = llm.get_num_tokens
+        try:
+            from langchain_openai import ChatOpenAI
+
+            llm = ChatOpenAI(**config.llm.model_dump())
+            _cached_length_function = llm.get_num_tokens
+        except Exception as exc:
+            # ChatOpenAI validates an openai client at construction, which
+            # requires a non-empty api_key. Token counting itself is local
+            # (tiktoken) and needs no key or network, so fall back to a
+            # tiktoken encoder when the client cannot be built (keyless
+            # deployments / CI mock-vLLM). cl100k_base matches the
+            # GPT-3.5/4 family OpenRAG targets; counts are equivalent.
+            import tiktoken
+
+            logger.warning(
+                "ChatOpenAI unavailable for token counting, falling back to tiktoken cl100k_base",
+                error=str(exc),
+            )
+            _encoding = tiktoken.get_encoding("cl100k_base")
+            _cached_length_function = lambda text: len(_encoding.encode(text))  # noqa: E731
     return _cached_length_function
 
 
 def format_context(
     docs: list[Document], max_context_tokens: int = 4096, number_sources: bool = True
 ) -> tuple[str, list[int]]:
-    if not docs:
-        return "No document found from the database", []
+    """Backward-compat shim — delegates to `core.prompts.chat_prompt_builder.format_context`.
 
-    _length_function = get_num_tokens()
+    The legacy signature took LangChain Documents and resolved a tokenizer
+    internally; the core version takes raw strings + an injected
+    length_function. We adapt by extracting page_content and threading
+    the cached tokenizer through.
+    """
+    from core.prompts.chat_prompt_builder import format_context as _core_format_context
 
-    reduced_docs = []
-    included_indices = []
-    total_tokens = 0
-
-    for i, doc in enumerate(docs):
-        prefix = f"[Source {len(reduced_docs) + 1}]\n" if number_sources else ""
-        n_tokens = _length_function(doc.page_content)
-        if prefix:
-            n_tokens += _length_function(prefix)
-        if total_tokens + n_tokens > max_context_tokens:
-            break
-        reduced_docs.append(f"{prefix}{doc.page_content}")
-        included_indices.append(i)
-        total_tokens += n_tokens
-
-    logger.debug("Context formatted", total_tokens=total_tokens, doc_count=len(reduced_docs))
-    return SOURCE_SEPARATOR.join(reduced_docs), included_indices
+    texts = [doc.page_content for doc in docs]
+    text, included = _core_format_context(
+        texts,
+        max_context_tokens=max_context_tokens,
+        length_function=get_num_tokens(),
+        number_sources=number_sources,
+    )
+    logger.debug("Context formatted", doc_count=len(included))
+    return text, included
 
 
 def format_web_context(
@@ -126,41 +91,21 @@ def format_web_context(
     start_index: int = 1,
     max_tokens: int = 2000,
 ) -> tuple[str, list[int], int]:
-    """Format web results as numbered [Source N] blocks within a token budget.
+    """Backward-compat shim — delegates to `core.prompts.chat_prompt_builder.format_web_context`.
 
-    Uses fetched page content when available, falling back to the search snippet.
-
-    Args:
-        web_results: Results from web search provider (list of WebResult)
-        start_index: First source number (continues numbering after RAG sources)
-        max_tokens: Maximum token budget for all web sources combined
-
-    Returns:
-        (formatted_string, list_of_source_numbers_used, total_tokens_used)
+    Same adaptation pattern as `format_context`: legacy resolved the
+    tokenizer internally, core takes it as a parameter.
     """
-    if not web_results:
-        return "", [], 0
+    from core.prompts.chat_prompt_builder import format_web_context as _core_format_web_context
 
-    _length_function = get_num_tokens()
-
-    parts = []
-    source_numbers = []
-    total_tokens = 0
-
-    for i, result in enumerate(web_results):
-        n = start_index + i
-        title = sanitize_text(result.title)
-        body = sanitize_text(result.content) if result.content else sanitize_text(result.snippet)
-        block = f"[Source {n}]\n{title}\n{body}"
-        block_tokens = _length_function(block)
-        if total_tokens + block_tokens > max_tokens and parts:
-            break
-        parts.append(block)
-        source_numbers.append(n)
-        total_tokens += block_tokens
-
-    logger.debug("Web context formatted", total_tokens=total_tokens, source_count=len(parts))
-    return SOURCE_SEPARATOR.join(parts), source_numbers, total_tokens
+    text, source_numbers, total_tokens = _core_format_web_context(
+        web_results,
+        length_function=get_num_tokens(),
+        start_index=start_index,
+        max_tokens=max_tokens,
+    )
+    logger.debug("Web context formatted", total_tokens=total_tokens, source_count=len(source_numbers))
+    return text, source_numbers, total_tokens
 
 
 # Line-terminal anchor `(?=\n|$)` — matches only when the tag sits flush against
