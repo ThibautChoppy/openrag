@@ -265,6 +265,11 @@ def _install_stubs():
 
     logger_stub = types.ModuleType("utils.logger")
     logger_stub.escape_markup = lambda s: s.replace("\\", "\\\\").replace("<", "\\<").replace(">", "\\>")
+    logger_stub.mask_email = (
+        lambda email: f"{email.partition('@')[0][0]}***@{email.partition('@')[2]}"
+        if isinstance(email, str) and "@" in email and email.partition("@")[0]
+        else "***"
+    )
     logger_stub.get_logger = _logger
     sys.modules["utils.logger"] = logger_stub
     openai_stub = types.ModuleType("openai")
