@@ -68,7 +68,7 @@ def _task_state_manager() -> MagicMock:
 
 
 def test_from_ray_namespace_does_not_require_legacy_indexer_actor() -> None:
-    from services.storage.worker_dispatcher import WorkerDispatcher, from_ray_namespace
+    from services.workers.dispatcher import WorkerDispatcher, from_ray_namespace
 
     tsm = _task_state_manager()
     pool = _pool_with_ref(object())
@@ -95,7 +95,7 @@ def test_from_ray_namespace_does_not_require_legacy_indexer_actor() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_indexing_queues_worker_pool_task_and_records_ref() -> None:
-    from services.storage.worker_dispatcher import WorkerDispatcher
+    from services.workers.dispatcher import WorkerDispatcher
 
     ref = object()
     pool = _pool_with_ref(ref)
@@ -109,7 +109,7 @@ async def test_dispatch_indexing_queues_worker_pool_task_and_records_ref() -> No
         collection="default",
     )
 
-    with patch("services.storage.worker_dispatcher.uuid") as mock_uuid:
+    with patch("services.workers.dispatcher.uuid") as mock_uuid:
         mock_uuid.uuid4.return_value.hex = "task-1"
         task_id = await dispatcher.dispatch_indexing(
             path="/data/report.txt",
@@ -143,7 +143,7 @@ async def test_dispatch_indexing_queues_worker_pool_task_and_records_ref() -> No
 
 @pytest.mark.asyncio
 async def test_worker_dispatcher_mutates_files_without_legacy_indexer() -> None:
-    from services.storage.worker_dispatcher import WorkerDispatcher
+    from services.workers.dispatcher import WorkerDispatcher
 
     vector_store = _vector_store()
     document_repo = _document_repo()
@@ -184,7 +184,7 @@ async def test_worker_dispatcher_mutates_files_without_legacy_indexer() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_task_uses_stored_pool_object_ref() -> None:
-    from services.storage.worker_dispatcher import WorkerDispatcher
+    from services.workers.dispatcher import WorkerDispatcher
 
     ref = object()
     tsm = _task_state_manager()
@@ -209,7 +209,7 @@ async def test_cancel_task_uses_stored_pool_object_ref() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_task_marks_cancelled_even_if_worker_finished_first() -> None:
-    from services.storage.worker_dispatcher import WorkerDispatcher
+    from services.workers.dispatcher import WorkerDispatcher
 
     ref = object()
     tsm = _task_state_manager()

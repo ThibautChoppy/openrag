@@ -403,7 +403,7 @@ class ServiceContainer:
         """
         if self._indexing_service is None:
             from services.orchestrators.indexing_service import IndexingService
-            from services.storage.worker_dispatcher import from_ray_namespace
+            from services.workers.dispatcher import from_ray_namespace
 
             settings = self._require_settings()
             self._indexing_service = IndexingService(
