@@ -11,8 +11,8 @@ gate, delegation to the injected service, cookie set/clear, and the
 ``OIDCFlowError`` → HTTP-response mapping. The service is stubbed via
 ``dependency_overrides`` so no container / Ray / IdP is needed.
 
-The router transitively imports ``utils.dependencies`` (Ray actors at
-import time) through its dependency graph, so we stub that module in
+The router transitively imports ``services.workers.bootstrap`` (Ray actors
+at import time) through its dependency graph, so we stub that module in
 ``sys.modules`` before importing the router.
 """
 
@@ -34,19 +34,18 @@ from fastapi.testclient import TestClient  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-_STUBBED_MODULES = ("utils", "utils.dependencies", "utils.logger")
+_STUBBED_MODULES = ("utils", "utils.logger", "services.workers.bootstrap")
 
 
 def _install_dependencies_stub() -> dict[str, types.ModuleType | None]:
     previous_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
-    stub = types.ModuleType("utils.dependencies")
-    stub.get_vectordb = lambda: None
+    stub = types.ModuleType("services.workers.bootstrap")
+    stub.actor_creation_map = {}
     stub.get_task_state_manager = lambda: None
     stub.get_serializer = lambda: None
-    stub.get_indexer = lambda: None
     stub.get_marker_pool = lambda: None
-    sys.modules["utils.dependencies"] = stub
+    sys.modules["services.workers.bootstrap"] = stub
 
     def _logger():
         logger = types.SimpleNamespace(

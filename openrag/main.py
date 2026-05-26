@@ -24,6 +24,11 @@ ray.init(dashboard_host="0.0.0.0")
 
 
 from components.auth.middleware import AuthMiddleware
+
+# Bootstrap the long-lived worker actors (TaskStateManager, DocSerializer,
+# parser pools, semaphores). Imported for side effects; the routes below
+# look the actors up by name via ray.get_actor.
+import services.workers.bootstrap  # noqa: F401
 from routers.actors import router as actors_router
 from routers.auth import router as auth_router
 from routers.extract import router as extract_router

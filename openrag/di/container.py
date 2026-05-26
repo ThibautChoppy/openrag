@@ -428,7 +428,7 @@ class ServiceContainer:
         """
         if self._job_service is None:
             from services.orchestrators.job_service import JobService
-            from utils.dependencies import get_task_state_manager
+            from services.workers.bootstrap import get_task_state_manager
 
             self._job_service = JobService(task_state_manager=get_task_state_manager())
         return self._job_service

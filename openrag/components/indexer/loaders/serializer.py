@@ -2,7 +2,7 @@
 
 The implementation now lives in
 ``services/workers/parsers/doc_serializer.py``; this module re-exports
-``DocSerializer`` so existing import paths (``utils/dependencies.py``,
+``DocSerializer`` so existing import paths (``services/workers/bootstrap.py``,
 ``services/storage/serializer_ray_shim.py``) are unaffected.
 """
 

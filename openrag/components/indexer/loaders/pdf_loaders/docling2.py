@@ -3,7 +3,7 @@
 The Ray actor + pool (``DoclingWorker``, ``DoclingPool``) and the
 services-side :class:`BasePooledParser` implementation now live in
 ``services/workers/parsers/docling_workers.py``; this module re-exports
-them for legacy import paths (``utils.dependencies`` constructs the
+them for legacy import paths (``services.workers.bootstrap`` constructs the
 named ``DoclingPool`` actor at startup via ``get_or_create_actor``).
 
 ``DoclingLoader2`` is a thin :class:`BaseLoader` adapter that delegates

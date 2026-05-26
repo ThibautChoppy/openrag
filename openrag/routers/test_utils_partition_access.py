@@ -8,8 +8,8 @@ from fastapi import HTTPException
 
 _STUBBED_MODULES = (
     "utils",
-    "utils.dependencies",
     "utils.logger",
+    "services.workers.bootstrap",
     "openai",
 )
 
@@ -21,9 +21,9 @@ def _install_runtime_stubs() -> dict[str, types.ModuleType | None]:
     utils_stub.__path__ = []
     sys.modules["utils"] = utils_stub
 
-    dependencies_stub = types.ModuleType("utils.dependencies")
-    dependencies_stub.get_task_state_manager = lambda: None
-    sys.modules["utils.dependencies"] = dependencies_stub
+    bootstrap_stub = types.ModuleType("services.workers.bootstrap")
+    bootstrap_stub.get_task_state_manager = lambda: None
+    sys.modules["services.workers.bootstrap"] = bootstrap_stub
 
     def _logger():
         logger = types.SimpleNamespace(

@@ -1,3 +1,23 @@
+"""Ray-actor bootstrap for the worker pool.
+
+Imported at startup (explicitly by ``main.py``) to create the long-lived
+detached actors the request path looks up by name:
+
+* TaskStateManager  — shared task-state actor
+* DocSerializer     — loader dispatcher
+* MarkerPool / DoclingPool / WhisperPool / WhisperActor — GPU parsers
+* llmSemaphore / vlmSemaphore / audioSemaphore — cluster-wide rate limiters
+
+This is the **only** non-startup module outside ``services/workers/`` that
+imports Ray — the phase-9 plan permits Ray in ``services/workers/`` plus
+the ``main.py`` startup sequence. Before phase 9 the same logic lived in
+``utils/dependencies.py``; that location violated the "Ray only in
+workers + startup" rule, so the bootstrap moved here.
+
+``actor_creation_map`` is read by ``routers/actors.py`` to restart a
+named actor on-demand from the admin endpoint.
+"""
+
 from functools import wraps
 
 import ray
@@ -10,7 +30,6 @@ from services.inference.distributed_semaphore import DistributedSemaphoreActor
 from services.workers.task_state import TaskStateManager
 from utils.logger import get_logger
 
-# load config
 config = load_config()
 logger = get_logger()
 

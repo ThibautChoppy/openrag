@@ -2,7 +2,7 @@ import ray
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from ray.util.state import list_actors
-from utils.dependencies import (
+from services.workers.bootstrap import (
     actor_creation_map,
 )
 from utils.logger import get_logger
