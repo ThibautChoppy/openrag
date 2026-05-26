@@ -146,9 +146,7 @@ async def detect_language_via_actor(
     from ..ray_utils import call_ray_actor_with_timeout
 
     try:
-        actor = WhisperActor.options(
-            name="WhisperActor", namespace="openrag", get_if_exists=True
-        ).remote()
+        actor = WhisperActor.options(name="WhisperActor", namespace="openrag", get_if_exists=True).remote()
     except Exception:
         logger.exception("Error getting WhisperActor")
         return None
