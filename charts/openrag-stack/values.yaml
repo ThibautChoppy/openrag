@@ -206,6 +206,12 @@ vllm:
 
 # === Infinity reranker ===
 reranker:
+  # Set to false to skip deploying the reranker and use an external one instead.
+  # Configure externalUrl to point to the external reranker endpoint.
+  enabled: true
+  # URL of an external reranker (vLLM or any OpenAI-compatible reranker).
+  # When set, this overrides RERANKER_BASE_URL and no local reranker is deployed.
+  externalUrl: ""
   rerankerModelName: &rerankerModel "Alibaba-NLP/gte-multilingual-reranker-base"
   servicePort: &rerankerPort 7997
   image:
@@ -379,7 +385,7 @@ env:
     RERANKER_MODEL: *rerankerModel
     RERANKER_ENABLED: "true"
     RERANKER_TOP_K: "4"
-    RERANKER_BASE_URL: "http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}"
+    RERANKER_BASE_URL: '{{ if .Values.reranker.externalUrl }}{{ .Values.reranker.externalUrl }}{{ else }}http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}{{ end }}'
     RERANKER_MODEL_TYPE: "infinity"
 
     # Prompts
@@ -412,5 +418,6 @@ env:
     VLM_API_KEY: "sk-xxxx"       # VLM API key
     EMBEDDER_API_KEY: "EMPTY"
     TRANSCRIBER_API_KEY: "EMPTY"
+    RERANKER_API_KEY: "EMPTY"  # Set when using an external reranker that requires authentication
     AUTH_TOKEN: "sk-xxxx"        # OpenRAG API key
     HF_TOKEN: "hf_xxxx"          # HuggingFace token

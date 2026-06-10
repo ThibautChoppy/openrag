@@ -1,3 +1,4 @@
+{{- if .Values.reranker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -79,3 +80,4 @@ spec:
       port: {{ .Values.reranker.service.port }}
       targetPort: {{ .Values.reranker.service.port }}
   type: {{ .Values.reranker.service.type }}
+{{- end }}
