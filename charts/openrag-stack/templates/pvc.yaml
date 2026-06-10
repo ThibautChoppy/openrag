@@ -2,10 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: rag-model-weights
+  name: {{ .Release.Name }}-model-weights
   annotations:
     "helm.sh/resource-policy": keep
-
 spec:
   accessModes:
     - {{ .Values.persistence.accessMode }}
@@ -17,7 +16,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: rag-data
+  name: {{ .Release.Name }}-data
   annotations:
     "helm.sh/resource-policy": keep
 spec:
@@ -31,7 +30,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: rag-logs
+  name: {{ .Release.Name }}-logs
   annotations:
     "helm.sh/resource-policy": keep
 spec:
@@ -45,7 +44,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: rag-venv
+  name: {{ .Release.Name }}-venv
   annotations:
     "helm.sh/resource-policy": keep
 spec:
@@ -54,5 +53,19 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.volumes.venv.size }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-hydra-config
+  annotations:
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.volumes.hydraConfig.size }}
   storageClassName: {{ .Values.persistence.storageClass }}
 {{- end }}

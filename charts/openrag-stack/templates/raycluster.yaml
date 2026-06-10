@@ -1,7 +1,8 @@
+{{- if .Values.ray.enabled }}
 apiVersion: ray.io/v1
 kind: RayCluster
 metadata:
-  name: raycluster
+  name: {{ .Release.Name }}-raycluster
   annotations:
     ray.io/overwrite-container-cmd: "true"
 spec:
@@ -69,23 +70,27 @@ spec:
               - configMapRef:
                   name: rag-env
               - secretRef:
-                  name: rag-env-secrets
+                  name: {{ include "openrag-stack.secretName" . }}
             resources:
+              requests:
+                cpu: {{ .Values.ray.resources.head.requests.cpu | quote }}
+                memory: {{ .Values.ray.resources.head.requests.memory | quote }}
+                nvidia.com/gpu: 1
               limits:
                 nvidia.com/gpu: 1
         volumes:
           - name: model-weights
             persistentVolumeClaim:
-              claimName: rag-model-weights
+              claimName: {{ .Release.Name }}-model-weights
           - name: data
             persistentVolumeClaim:
-              claimName: rag-data
+              claimName: {{ .Release.Name }}-data
           - name: logs
             persistentVolumeClaim:
-              claimName: rag-logs
+              claimName: {{ .Release.Name }}-logs
           - name: venv
             persistentVolumeClaim:
-              claimName: rag-venv
+              claimName: {{ .Release.Name }}-venv
 
   workerGroupSpecs:
   {{- range $i, $e := until (.Values.ray.workers.count | int) }}
@@ -95,9 +100,10 @@ spec:
       maxReplicas: {{ $.Values.ray.workers.maxReplicas }}
       template:
         spec:
+          nodeSelector: {{- toYaml $.Values.ray.nodeSelector | nindent 12 }}
           initContainers:
             - name: init-venv
-              image: ghcr.io/linagora/openrag:dev-latest
+              image: {{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}
               command:
                 - sh
                 - -c
@@ -129,21 +135,26 @@ spec:
                 - configMapRef:
                     name: rag-env
                 - secretRef:
-                    name: rag-env-secrets
+                    name: {{ include "openrag-stack.secretName" $ }}
               resources:
+                requests:
+                  cpu: {{ $.Values.ray.resources.worker.requests.cpu | quote }}
+                  memory: {{ $.Values.ray.resources.worker.requests.memory | quote }}
+                  nvidia.com/gpu: 1
                 limits:
                   nvidia.com/gpu: 1
           volumes:
             - name: model-weights
               persistentVolumeClaim:
-                claimName: rag-model-weights
+                claimName: {{ $.Release.Name }}-model-weights
             - name: data
               persistentVolumeClaim:
-                claimName: rag-data
+                claimName: {{ $.Release.Name }}-data
             - name: logs
               persistentVolumeClaim:
-                claimName: rag-logs
+                claimName: {{ $.Release.Name }}-logs
             - name: venv
               persistentVolumeClaim:
-                claimName: rag-venv
+                claimName: {{ $.Release.Name }}-venv
   {{- end }}
+{{- end }}

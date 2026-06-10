@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: openrag
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       initContainers:
         - name: init-venv
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
@@ -35,15 +39,40 @@ spec:
       containers:
         - name: openrag
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
           ports:
             - containerPort: {{ .Values.openrag.service.port }}
           resources:
             {{- toYaml .Values.openrag.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /health_check
+              port: {{ .Values.openrag.service.port }}
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health_check
+              port: {{ .Values.openrag.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health_check
+              port: {{ .Values.openrag.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
           envFrom:
             - configMapRef:
                 name: rag-env
             - secretRef:
-                name: rag-env-secrets
+                name: {{ include "openrag-stack.secretName" . }}
           volumeMounts:
             - name: model-weights
               mountPath: /app/model_weights
@@ -56,16 +85,16 @@ spec:
       volumes:
         - name: model-weights
           persistentVolumeClaim:
-            claimName: rag-model-weights
+            claimName: {{ .Release.Name }}-model-weights
         - name: data
           persistentVolumeClaim:
-            claimName: rag-data
+            claimName: {{ .Release.Name }}-data
         - name: logs
           persistentVolumeClaim:
-            claimName: rag-logs
+            claimName: {{ .Release.Name }}-logs
         - name: venv
           persistentVolumeClaim:
-            claimName: rag-venv
+            claimName: {{ .Release.Name }}-venv
 ---
 apiVersion: v1
 kind: Service

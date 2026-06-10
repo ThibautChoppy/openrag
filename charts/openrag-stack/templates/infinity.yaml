@@ -17,11 +17,22 @@ spec:
         app.kubernetes.io/name: reranker
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.reranker.runtimeClassName }}
       runtimeClassName: {{ .Values.reranker.runtimeClassName }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       nodeSelector: {{- toYaml .Values.reranker.nodeSelector | nindent 8 }}
       containers:
         - name: reranker
           image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
           args:
             - "v2"
             - "--model-id"
@@ -32,6 +43,20 @@ spec:
             - containerPort: {{ .Values.reranker.service.port }}
           resources:
             {{- toYaml .Values.reranker.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.reranker.service.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.reranker.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: hf-cache
               mountPath: /app/.cache/huggingface
@@ -41,7 +66,7 @@ spec:
       volumes:
         - name: hf-cache
           persistentVolumeClaim:
-            claimName: rag-model-weights
+            claimName: {{ .Release.Name }}-model-weights
 ---
 apiVersion: v1
 kind: Service
