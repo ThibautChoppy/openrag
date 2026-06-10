@@ -18,9 +18,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        {{- toYaml .Values.openrag.podSecurityContext | nindent 8 }}
       initContainers:
         - name: init-venv
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
@@ -40,10 +38,7 @@ spec:
         - name: openrag
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: false  # app writes to /app/.venv and /tmp
+            {{- toYaml .Values.openrag.containerSecurityContext | nindent 12 }}
           ports:
             - containerPort: {{ .Values.openrag.service.port }}
           resources:

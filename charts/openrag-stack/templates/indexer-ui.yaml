@@ -19,18 +19,13 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        {{- toYaml .Values.indexerUi.podSecurityContext | nindent 8 }}
       containers:
         - name: indexer-ui
           image: {{ .Values.indexerUi.image }}
           imagePullPolicy: {{ .Values.indexerUi.imagePullPolicy }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: false  # Next.js writes to /tmp at runtime
+            {{- toYaml .Values.indexerUi.containerSecurityContext | nindent 12 }}
           env:
             {{- range $key, $value := .Values.indexerUi.env }}
             - name: {{ $key }}

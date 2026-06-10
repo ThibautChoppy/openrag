@@ -9,7 +9,7 @@ persistence:
     logs: { size: 1Gi }
     venv: { size: 10Gi }
 
-# === KubeRay operator (sous-chart) ===
+# === KubeRay operator (sub-chart) ===
 kuberay:
   enabled: true
 
@@ -84,6 +84,15 @@ vllm:
   vlmModelName: &vlmModel "Qwen/Qwen2.5-VL-7B-Instruct"
   whisperModelName: &whisperModel "openai/whisper-large-v3-turbo"
   llmModelName: &llmModel "RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-quantized.w8a8"
+
+  # Single source for the HF_TOKEN secret name passed to all four model specs.
+  # YAML anchor: editing this value propagates to all four hf_token.secretName entries below.
+  # Must match the chart env secret name ({{ .Release.Name }}-env-secrets by default).
+  # values.yaml is not templated, so set this manually when your release is not named "rag":
+  #   --set "vllm.servingEngineSpec.modelSpec[0].hf_token.secretName=<release>-env-secrets"
+  #   (repeat for indices 1, 2, 3 — see NOTES after install for the exact commands)
+  hfTokenSecretName: &vllmHfTokenSecretName "rag-env-secrets"
+
   servingEngineSpec:
     enableEngine: true
     modelSpec:
@@ -98,7 +107,7 @@ vllm:
         limitCPU: 4
         limitMemory: "16Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           gpuMemoryUtilization: 0.3
@@ -120,7 +129,7 @@ vllm:
         limitCPU: 4
         limitMemory: "16Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           gpuMemoryUtilization: 0.5
@@ -142,7 +151,7 @@ vllm:
         limitCPU: 8
         limitMemory: "32Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           v1: 1
@@ -162,6 +171,7 @@ vllm:
                 operator: In
                 values: ["llm"]
         pvcStorage: "50Gi"
+
       - name: "vlm"
         repository: "vllm/vllm-openai"
         tag: "v0.11.2"
@@ -173,7 +183,7 @@ vllm:
         limitCPU: 8
         limitMemory: "32Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           v1: 1
@@ -187,6 +197,7 @@ vllm:
               - key: gpu-role
                 operator: In
                 values: ["vlm"]
+
   routerSpec:
     enableRouter: false
 
@@ -208,7 +219,7 @@ reranker:
     - --port
     - *rerankerPort
   replicas: 1
-  runtimeClassName: nvidia   # Mettre "" pour désactiver
+  runtimeClassName: nvidia  # Set to "" to disable
   service:
     type: ClusterIP
     port: *rerankerPort
@@ -219,28 +230,40 @@ reranker:
     limits:
       cpu: "4"
       memory: "16Gi"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # model cache writes to /app/.cache
 
 indexerUi:
   enabled: true
-
   image: "linagoraai/indexer-ui:latest"
   imagePullPolicy: IfNotPresent
-
   replicaCount: 1
-
   env:
     API_BASE_URL: "http://localhost:8080"
     INCLUDE_CREDENTIALS: "false"
-
   service:
     type: ClusterIP
     port: 3000
     targetPort: 3000
-
   ingress:
     enabled: false
-
   resources: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # Next.js writes to /tmp at runtime
 
 # === OpenRAG main app ===
 openrag:
@@ -258,45 +281,53 @@ openrag:
       cpu: "4"
       memory: "16Gi"
   replicas: 1
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # app writes to /app/.venv and /tmp
 
 ingress:
   enabled: true
   className: "nginx"
   host: ""
-
   paths:
     openrag:
       enabled: true
 
 # === Shared env (config + secrets) ===
 env:
-  # Nom d'un Secret K8s existant à utiliser tel quel.
-  # Si renseigné, le chart ne crée aucune ressource Secret/ExternalSecret/VaultStaticSecret.
+  # Name of an existing K8s Secret to use as-is.
+  # When set, the chart creates no Secret/ExternalSecret/VaultStaticSecret resource.
   existingSecret: ""
 
-  # --- Secrets provider --- (ignoré si existingSecret est renseigné)
-  # type: values (défaut) | externalSecret | vaultStaticSecret
+  # Secrets provider — ignored when existingSecret is set.
+  # type: values (default) | externalSecret | vaultStaticSecret
   secretsProvider:
     type: values
 
-    # --- Option A : External Secrets Operator ---
+    # Option A: External Secrets Operator
     externalSecret:
       refreshInterval: "1h"
       secretStore:
         name: "vault-backend"
         kind: "ClusterSecretStore"
-      # Option 1 : récupérer toutes les clés d'un path (recommandé)
+      # Option 1: fetch all keys from a path (recommended)
       dataFrom: []
       # - extract:
       #     key: "openrag/secrets"
-      # Option 2 : mapper des clés individuellement
+      # Option 2: map individual keys
       data: []
       # - secretKey: API_KEY
       #   remoteRef:
       #     key: "openrag/secrets"
       #     property: "api_key"
 
-    # --- Option B : Vault Secrets Operator ---
+    # Option B: Vault Secrets Operator
     vaultStaticSecret:
       vaultAuthRef: "openrag-vault-auth"
       mount: "kv"
@@ -374,9 +405,9 @@ env:
 
   secrets:
     POSTGRES_PASSWORD: *pgPass
-    API_KEY: "sk-xxxx"       # LLM API KEY
-    VLM_API_KEY: "sk-xxxx"   # VLM API KEY
+    API_KEY: "sk-xxxx"           # LLM API key
+    VLM_API_KEY: "sk-xxxx"       # VLM API key
     EMBEDDER_API_KEY: "EMPTY"
     TRANSCRIBER_API_KEY: "EMPTY"
-    AUTH_TOKEN: "sk-xxxx"    # API KEY for OpenRAG
-    HF_TOKEN: "hf_xxxx"      # HuggingFace token
+    AUTH_TOKEN: "sk-xxxx"        # OpenRAG API key
+    HF_TOKEN: "hf_xxxx"          # HuggingFace token

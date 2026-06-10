@@ -21,18 +21,13 @@ spec:
       runtimeClassName: {{ .Values.reranker.runtimeClassName }}
       {{- end }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        {{- toYaml .Values.reranker.podSecurityContext | nindent 8 }}
       nodeSelector: {{- toYaml .Values.reranker.nodeSelector | nindent 8 }}
       containers:
         - name: reranker
           image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: false  # model cache writes to /app/.cache
+            {{- toYaml .Values.reranker.containerSecurityContext | nindent 12 }}
           args:
             - "v2"
             - "--model-id"

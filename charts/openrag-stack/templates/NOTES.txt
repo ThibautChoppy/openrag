@@ -18,7 +18,8 @@ hf_token.secretName entries. Re-run the install/upgrade with:
     --set "vllm.servingEngineSpec.modelSpec[2].hf_token.secretName={{ $secretName }}" \
     --set "vllm.servingEngineSpec.modelSpec[3].hf_token.secretName={{ $secretName }}"
 
-Or add them to a custom values file and pass -f custom-values.yaml.
+Alternatively, edit values.yaml and set vllm.hfTokenSecretName: {{ $secretName }}
+The YAML anchor propagates the change to all four model entries automatically.
 
 {{- end }}
 
