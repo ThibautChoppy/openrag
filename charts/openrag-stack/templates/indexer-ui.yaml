@@ -30,7 +30,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: false  # Next.js writes to /tmp at runtime
           env:
             {{- range $key, $value := .Values.indexerUi.env }}
             - name: {{ $key }}

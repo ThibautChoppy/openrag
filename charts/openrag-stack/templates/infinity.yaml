@@ -32,7 +32,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: false  # model cache writes to /app/.cache
           args:
             - "v2"
             - "--model-id"
@@ -62,7 +62,7 @@ spec:
               mountPath: /app/.cache/huggingface
           envFrom:
             - configMapRef:
-                name: rag-env
+                name: {{ .Release.Name }}-env
       volumes:
         - name: hf-cache
           persistentVolumeClaim:

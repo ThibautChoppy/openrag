@@ -6,7 +6,6 @@ persistence:
   volumes:
     modelWeights: { size: 50Gi }
     data: { size: 20Gi }
-    hydraConfig: { size: 10Mi }
     logs: { size: 1Gi }
     venv: { size: 10Gi }
 

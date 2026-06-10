@@ -54,18 +54,4 @@ spec:
     requests:
       storage: {{ .Values.persistence.volumes.venv.size }}
   storageClassName: {{ .Values.persistence.storageClass }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ .Release.Name }}-hydra-config
-  annotations:
-    "helm.sh/resource-policy": keep
-spec:
-  accessModes:
-    - {{ .Values.persistence.accessMode }}
-  resources:
-    requests:
-      storage: {{ .Values.persistence.volumes.hydraConfig.size }}
-  storageClassName: {{ .Values.persistence.storageClass }}
 {{- end }}

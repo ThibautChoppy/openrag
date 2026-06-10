@@ -8,7 +8,6 @@ metadata:
 spec:
   rayVersion: "2.47.1"
   enableInTreeAutoscaling: false
-
   headGroupSpec:
     serviceType: ClusterIP
     template:
@@ -68,7 +67,7 @@ spec:
                 mountPath: /app/.venv
             envFrom:
               - configMapRef:
-                  name: rag-env
+                  name: {{ $.Release.Name }}-env
               - secretRef:
                   name: {{ include "openrag-stack.secretName" . }}
             resources:
@@ -133,7 +132,7 @@ spec:
                   mountPath: /app/.venv
               envFrom:
                 - configMapRef:
-                    name: rag-env
+                    name: {{ $.Release.Name }}-env
                 - secretRef:
                     name: {{ include "openrag-stack.secretName" $ }}
               resources:

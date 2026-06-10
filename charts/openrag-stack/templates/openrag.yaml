@@ -43,7 +43,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: false  # app writes to /app/.venv and /tmp
           ports:
             - containerPort: {{ .Values.openrag.service.port }}
           resources:
@@ -70,7 +70,7 @@ spec:
             failureThreshold: 3
           envFrom:
             - configMapRef:
-                name: rag-env
+                name: {{ .Release.Name }}-env
             - secretRef:
                 name: {{ include "openrag-stack.secretName" . }}
           volumeMounts:
