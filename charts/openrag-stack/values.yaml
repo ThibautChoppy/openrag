@@ -1,3 +1,6 @@
+# Set to false to disable this chart when used as a subchart.
+enabled: true
+
 # === Global shared persistence ===
 persistence:
   enabled: true
