@@ -14,8 +14,8 @@ spec:
     - http:
         paths:
           {{- if .Values.ingress.paths.openrag.enabled }}
-          - path: /api(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /api(?:/|$)(.*)
+            pathType: Prefix
             backend:
               service:
                 name: {{ .Release.Name }}-openrag
@@ -23,7 +23,7 @@ spec:
                   number: {{ .Values.openrag.service.port }}
           {{- end }}
           - path: /(.*)
-            pathType: ImplementationSpecific
+            pathType: Prefix
             backend:
               service:
                 name: {{ .Release.Name }}-raycluster-head-svc
