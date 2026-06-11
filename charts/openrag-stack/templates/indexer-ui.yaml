@@ -20,6 +20,16 @@ spec:
     spec:
       securityContext:
         {{- toYaml .Values.indexerUi.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: init-config-json
+          image: {{ .Values.indexerUi.image }}
+          imagePullPolicy: {{ .Values.indexerUi.imagePullPolicy }}
+          command: ["sh", "-c", "touch /config/config.json"]
+          securityContext:
+            {{- toYaml .Values.indexerUi.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: config-json
+              mountPath: /config
       containers:
         - name: indexer-ui
           image: {{ .Values.indexerUi.image }}
@@ -35,6 +45,13 @@ spec:
             - containerPort: {{ .Values.indexerUi.service.targetPort }}
           resources:
             {{- toYaml .Values.indexerUi.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-json
+              mountPath: /app/config.json
+              subPath: config.json
+      volumes:
+        - name: config-json
+          emptyDir: {}
 
 ---
 apiVersion: v1

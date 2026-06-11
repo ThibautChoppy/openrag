@@ -267,18 +267,19 @@ indexerUi:
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
+    runAsGroup: 1000
     fsGroup: 1000
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
-    readOnlyRootFilesystem: false  # Next.js writes to /tmp at runtime
+    readOnlyRootFilesystem: false  # Next.js writes to /app/config.json and /tmp at runtime
 
 # === OpenRAG main app ===
 openrag:
   image:
     repository: linagoraai/openrag
-    tag: "1.1.3"
+    tag: "v1.1.11"
   service:
     type: ClusterIP
     port: 8080
