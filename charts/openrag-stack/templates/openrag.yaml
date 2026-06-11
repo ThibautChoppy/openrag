@@ -77,6 +77,8 @@ spec:
               mountPath: /app/logs
             - name: venv
               mountPath: /app/.venv
+            - name: egg-info
+              mountPath: /app/openrag.egg-info
       volumes:
         - name: model-weights
           persistentVolumeClaim:
@@ -90,6 +92,8 @@ spec:
         - name: venv
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-venv
+        - name: egg-info
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
