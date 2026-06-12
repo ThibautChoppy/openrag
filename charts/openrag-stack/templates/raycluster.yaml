@@ -12,7 +12,9 @@ spec:
     serviceType: ClusterIP
     template:
       spec:
-        nodeSelector: {{- toYaml .Values.ray.nodeSelector | nindent 12 }}
+        {{- with .Values.ray.nodeSelector }}
+        nodeSelector: {{- toYaml . | nindent 12 }}
+        {{- end }}
         initContainers:
           - name: init-venv-sync
             image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
@@ -70,13 +72,10 @@ spec:
                   name: {{ $.Release.Name }}-env
               - secretRef:
                   name: {{ include "openrag-stack.secretName" . }}
+            {{- with .Values.ray.resources }}
             resources:
-              requests:
-                cpu: {{ .Values.ray.resources.head.requests.cpu | quote }}
-                memory: {{ .Values.ray.resources.head.requests.memory | quote }}
-                nvidia.com/gpu: 1
-              limits:
-                nvidia.com/gpu: 1
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
         volumes:
           - name: model-weights
             persistentVolumeClaim:
@@ -135,13 +134,10 @@ spec:
                     name: {{ $.Release.Name }}-env
                 - secretRef:
                     name: {{ include "openrag-stack.secretName" $ }}
+              {{- with $.Values.ray.resources }}
               resources:
-                requests:
-                  cpu: {{ $.Values.ray.resources.worker.requests.cpu | quote }}
-                  memory: {{ $.Values.ray.resources.worker.requests.memory | quote }}
-                  nvidia.com/gpu: 1
-                limits:
-                  nvidia.com/gpu: 1
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
           volumes:
             - name: model-weights
               persistentVolumeClaim:

@@ -23,7 +23,9 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.reranker.podSecurityContext | nindent 8 }}
-      nodeSelector: {{- toYaml .Values.reranker.nodeSelector | nindent 8 }}
+      {{- with .Values.reranker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: reranker
           image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
