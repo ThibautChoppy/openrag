@@ -211,7 +211,7 @@ reranker:
     - --port
     - *rerankerPort
   replicas: 1
-runtimeClassName: ""
+  runtimeClassName: ""
   service:
     type: ClusterIP
     port: *rerankerPort
