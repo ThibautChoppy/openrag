@@ -17,8 +17,12 @@ spec:
         app.kubernetes.io/name: reranker
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.reranker.runtimeClassName }}
       runtimeClassName: {{ .Values.reranker.runtimeClassName }}
-      nodeSelector: {{- toYaml .Values.reranker.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reranker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: reranker
           image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"

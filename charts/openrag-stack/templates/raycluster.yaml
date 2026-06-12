@@ -12,7 +12,9 @@ spec:
     serviceType: ClusterIP
     template:
       spec:
-        nodeSelector: {{- toYaml .Values.ray.nodeSelector | nindent 12 }}
+        {{- with .Values.ray.nodeSelector }}
+        nodeSelector: {{- toYaml . | nindent 12 }}
+        {{- end }}
         initContainers:
           - name: init-venv-sync
             image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
@@ -70,9 +72,10 @@ spec:
                   name: rag-env
               - secretRef:
                   name: rag-env-secrets
+            {{- with .Values.ray.resources }}
             resources:
-              limits:
-                nvidia.com/gpu: 1
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
         volumes:
           - name: model-weights
             persistentVolumeClaim:
@@ -97,7 +100,7 @@ spec:
         spec:
           initContainers:
             - name: init-venv
-              image: ghcr.io/linagora/openrag:dev-latest
+              image: {{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}
               command:
                 - sh
                 - -c
@@ -130,9 +133,10 @@ spec:
                     name: rag-env
                 - secretRef:
                     name: rag-env-secrets
+              {{- with $.Values.ray.resources }}
               resources:
-                limits:
-                  nvidia.com/gpu: 1
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
           volumes:
             - name: model-weights
               persistentVolumeClaim:

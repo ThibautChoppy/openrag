@@ -1,8 +1,9 @@
 # === Global shared persistence ===
 persistence:
   enabled: true
-  storageClass: &storageClass longhorn
-  accessMode: ReadWriteMany
+  storageClass: &storageClass ""  # empty = use cluster default StorageClass
+  annotations: {}
+  accessMode: ReadWriteOnce
   volumes:
     modelWeights: { size: 50Gi }
     data: { size: 20Gi }
@@ -16,8 +17,8 @@ ray:
     replicas: 1
     minReplicas: 1
     maxReplicas: 1
-  nodeSelector:
-    gpu-role: serving
+  nodeSelector: {}
+  resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
     repository: ghcr.io/linagora/openrag-ray
     tag: latest
@@ -89,11 +90,7 @@ vllm:
         vllmConfig:
           gpuMemoryUtilization: 0.3
           extraArgs: ["--trust-remote-code", "--task", "embed"]
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["serving"]
+        nodeSelectorTerms: []
 
       - name: "whisper"
         repository: "ghcr.io/linagora/vllm-whisper"
@@ -111,11 +108,7 @@ vllm:
         vllmConfig:
           gpuMemoryUtilization: 0.5
           extraArgs: ["--trust-remote-code", "--async-scheduling"]
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["serving"]
+        nodeSelectorTerms: []
 
       - name: "llm"
         repository: "vllm/vllm-openai"
@@ -142,11 +135,7 @@ vllm:
             requestCPU: 8
             requestMemory: "32Gi"
             requestGPU: 2
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["llm"]
+        nodeSelectorTerms: []
         pvcStorage: "50Gi"
       - name: "vlm"
         repository: "vllm/vllm-openai"
@@ -168,11 +157,7 @@ vllm:
           maxModelLen: 8192
           extraArgs: ["--trust-remote-code"]
         shmSize: "20Gi"
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["vlm"]
+        nodeSelectorTerms: []
   routerSpec:
     enableRouter: false
 
@@ -183,8 +168,7 @@ reranker:
   image:
     repository: michaelf34/infinity
     tag: latest
-  nodeSelector:
-    gpu-role: serving
+  nodeSelector: {}
   model:
     id: Alibaba-NLP/gte-multilingual-reranker-base
   command:
@@ -194,7 +178,7 @@ reranker:
     - --port
     - *rerankerPort
   replicas: 1
-  runtimeClassName: nvidia
+  runtimeClassName: ""
   service:
     type: ClusterIP
     port: *rerankerPort
@@ -247,8 +231,12 @@ openrag:
 
 ingress:
   enabled: true
-  className: "nginx"
+  className: ""
   host: ""
+  annotations: {}
+    # nginx.ingress.kubernetes.io/rewrite-target: /$1
+    # nginx.ingress.kubernetes.io/use-regex: "true"
+    # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
 
   paths:
     openrag:

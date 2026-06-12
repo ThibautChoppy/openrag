@@ -3,13 +3,14 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "openrag-stack.fullname" . }}-ingress
+  {{- with .Values.ingress.annotations }}
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
-    nginx.ingress.kubernetes.io/use-regex: "true"  
-    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
-
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
   rules:
     - http:
         paths:
