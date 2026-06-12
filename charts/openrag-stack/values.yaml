@@ -24,11 +24,12 @@ ray:
     replicas: 1
     minReplicas: 1
     maxReplicas: 1
+  serviceAccountName: ""
   nodeSelector: {}
   resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
     repository: ghcr.io/linagora/openrag-ray
-    tag: "1.1.3"
+    tag: "v1.1.11"
   resources:
     head:
       requests:
@@ -410,7 +411,7 @@ env:
     UV_LINK_MODE: "copy"
     UV_CACHE_DIR: "/tmp/uv-cache"
     UV_PYTHON_PREFERENCE: "only-system"
-    UV_PYTHON: "/usr/local/bin/python3"  # pin exact binary, bypasses .python-version patch-version mismatch
+    UV_PYTHON: "python3"  # portable: finds python3 in PATH, bypasses .python-version patch-version mismatch
 
   secrets:
     POSTGRES_PASSWORD: *pgPass
@@ -421,3 +422,15 @@ env:
     RERANKER_API_KEY: "EMPTY"  # Set when using an external reranker that requires authentication
     AUTH_TOKEN: "sk-xxxx"        # OpenRAG API key
     HF_TOKEN: "hf_xxxx"          # HuggingFace token
+
+# Arbitrary additional Kubernetes objects rendered at install time.
+# Each entry is a full resource manifest; Go templates are supported.
+# Example:
+# extraObjects:
+#   - apiVersion: v1
+#     kind: ConfigMap
+#     metadata:
+#       name: "{{ .Release.Name }}-extra"
+#     data:
+#       key: value
+extraObjects: []

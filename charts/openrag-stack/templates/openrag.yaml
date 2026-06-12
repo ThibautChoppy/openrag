@@ -31,6 +31,9 @@ spec:
                 sleep 3
               done
               echo "Venv is ready."
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-env
           volumeMounts:
             - name: venv
               mountPath: /app/.venv

@@ -15,6 +15,9 @@ spec:
         {{- with .Values.ray.nodeSelector }}
         nodeSelector: {{- toYaml . | nindent 12 }}
         {{- end }}
+        {{- with .Values.ray.serviceAccountName }}
+        serviceAccountName: {{ . }}
+        {{- end }}
         initContainers:
           - name: init-venv-sync
             image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
@@ -22,14 +25,21 @@ spec:
               - sh
               - -c
               - |
-                if [ -f /app/.venv/.ready ]; then
-                  echo "Existing env detected, skipping install."
+                set -e
+                if [ -f /app/.venv/.ready ] && /app/.venv/bin/python --version > /dev/null 2>&1; then
+                  echo "Existing valid env detected, skipping install."
                 else
-                  echo "No env ready, cleaning and syncing..."
+                  echo "Env missing or invalid, rebuilding..."
                   rm -rf /app/.venv/*
-                  uv sync
+                  uv venv --python python3 /app/.venv
+                  uv sync --no-dev
                   touch /app/.venv/.ready
                 fi
+            envFrom:
+              - configMapRef:
+                  name: {{ .Release.Name }}-env
+              - secretRef:
+                  name: {{ include "openrag-stack.secretName" . }}
             volumeMounts:
               - name: venv
                 mountPath: /app/.venv
@@ -72,7 +82,7 @@ spec:
                   name: {{ $.Release.Name }}-env
               - secretRef:
                   name: {{ include "openrag-stack.secretName" . }}
-            {{- with .Values.ray.resources }}
+            {{- with .Values.ray.resources.head }}
             resources:
               {{- toYaml . | nindent 14 }}
             {{- end }}
@@ -99,6 +109,9 @@ spec:
       template:
         spec:
           nodeSelector: {{- toYaml $.Values.ray.nodeSelector | nindent 12 }}
+          {{- with $.Values.ray.serviceAccountName }}
+          serviceAccountName: {{ . }}
+          {{- end }}
           initContainers:
             - name: init-venv
               image: {{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}
@@ -134,7 +147,7 @@ spec:
                     name: {{ $.Release.Name }}-env
                 - secretRef:
                     name: {{ include "openrag-stack.secretName" $ }}
-              {{- with $.Values.ray.resources }}
+              {{- with $.Values.ray.resources.worker }}
               resources:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
