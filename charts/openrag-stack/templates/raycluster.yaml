@@ -18,6 +18,10 @@ spec:
         {{- with .Values.ray.serviceAccountName }}
         serviceAccountName: {{ . }}
         {{- end }}
+        {{- with .Values.ray.podSecurityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         initContainers:
           - name: init-venv-sync
             image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
@@ -111,6 +115,10 @@ spec:
           nodeSelector: {{- toYaml $.Values.ray.nodeSelector | nindent 12 }}
           {{- with $.Values.ray.serviceAccountName }}
           serviceAccountName: {{ . }}
+          {{- end }}
+          {{- with $.Values.ray.podSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           initContainers:
             - name: init-venv

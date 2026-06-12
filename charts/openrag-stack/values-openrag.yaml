@@ -1,0 +1,225 @@
+externalSecrets:
+  basePath: ocpbm01s2/openrag
+  items:
+    - name: openrag-db-appuser
+      data:
+        - secretKey: username
+          subPath: cnpg-user
+          property: username
+        - secretKey: password
+          subPath: cnpg-user
+          property: password
+    - name: openrag-db-superuser
+      data:
+        - secretKey: username
+          subPath: cnpg-superuser
+          property: username
+        - secretKey: password
+          subPath: cnpg-superuser
+          property: password
+    - name: s3-mi-cert
+      basePath: common-prod
+      data:
+        - secretKey: ca-s3.crt
+          subPath: cert-mi
+          property: ca-s3.crt
+    - name: s3-creds
+      basePath: ocpbm01s2/openrag
+      data:
+        - secretKey: ACCESS_KEY_ID
+          subPath: s3-creds-secret
+          property: ACCESS_KEY_ID
+        - secretKey: ACCESS_SECRET_KEY
+          subPath: s3-creds-secret
+          property: ACCESS_SECRET_KEY
+        - secretKey: region
+          subPath: s3-creds-secret
+          property: REGION
+
+cnpg:
+  pvcSize:
+    data: 10Gi
+    wal: 2Gi
+  backup:
+    enabled: true
+    legacyMode: true
+    endpointURL: "https://mirai-f337-openrag.s3obj.ecs.objstore.r1.pi2.minint.fr"
+    destinationPath: "s3://cnpg/"
+    endpointCA:
+      secretName: s3-mi-cert
+    s3Credentials:
+      secretName: s3-creds
+  recovery:
+    endpointURL: "https://mirai-f337-openrag.s3obj.ecs.objstore.r1.pi2.minint.fr"
+    destinationPath: "s3://cnpg/"
+    endpointCA:
+      secretName: s3-mi-cert
+    s3Credentials:
+      secretName: s3-creds
+  extraSpec:
+    env:
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: WHEN_REQUIRED
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: WHEN_REQUIRED
+
+openrag-stack:
+  enabled: true
+  ingress:
+    enabled: true
+    className: "apisix"
+    host: openrag.apps.ocpbm01s2.cores.r2.pi2.minint.fr
+    annotations:
+      cert-manager.io/cluster-issuer: self-signed-ca
+    tls:
+      - secretName: openrag-tls
+        hosts:
+          - openrag.apps.ocpbm01s2.cores.r2.pi2.minint.fr
+  
+  persistence:
+    storageClass: &storageClass "pw-relp2-rwx"
+
+  milvus:
+    enabled: false
+  postgresql:
+    enabled: false
+  vllm:
+    enabled: false
+  kuberay:
+    enabled: true
+  ray:
+    enabled: true
+    serviceAccountName: "ocpbm01s2-openrag-ray"
+    podSecurityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+      fsGroup: 0
+
+  extraObjects:
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ .Release.Name }}-ray"
+        namespace: "{{ .Release.Namespace }}"
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ .Release.Name }}-indexer-ui"
+        namespace: "{{ .Release.Namespace }}"
+    - apiVersion: security.openshift.io/v1
+      kind: SecurityContextConstraints
+      metadata:
+        name: "{{ .Release.Name }}-openrag"
+      allowPrivilegeEscalation: false
+      allowPrivilegedContainer: false
+      runAsUser:
+        type: RunAsAny
+      seLinuxContext:
+        type: RunAsAny
+      fsGroup:
+        type: RunAsAny
+      supplementalGroups:
+        type: RunAsAny
+      volumes:
+        - configMap
+        - emptyDir
+        - persistentVolumeClaim
+        - projected
+        - secret
+      users:
+        - "system:serviceaccount:{{ .Release.Namespace }}:{{ .Release.Name }}-ray"
+        - "system:serviceaccount:{{ .Release.Namespace }}:{{ .Release.Name }}-indexer-ui"
+
+  reranker:
+    enabled: false
+    externalUrl: "https://mirai-api.apps.ocpbm01s2.cores.r2.pi2.minint.fr/rerank"
+  indexerUi:
+    serviceAccountName: "ocpbm01s2-openrag-indexer-ui"
+    podSecurityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+      fsGroup: 0
+    containerSecurityContext: ~
+  openrag:
+    image:
+      repository: public.containers.forge-dc.cloudmi.minint.fr/linagoraai/openrag
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: ~
+      fsGroup: ~
+
+  proxy:
+    enabled: true
+    url: "http://192.168.130.126:80"
+
+  env:
+    secretsProvider:
+      type: externalSecret
+      externalSecret:
+        refreshInterval: "1h"
+        secretStore:
+          name: "default"
+          kind: "ClusterSecretStore"
+        data:
+        - secretKey: POSTGRES_PASSWORD
+          remoteRef:
+            key: "ocpbm01s2/openrag/cnpg-user"
+            property: "username"
+        - secretKey: API_KEY
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "API_KEY"
+        - secretKey: EMBEDDER_API_KEY
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "EMBEDDER_API_KEY"
+        - secretKey: RERANKER_API_KEY
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "RERANKER_API_KEY"
+        - secretKey: TRANSCRIBER_API_KEY
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "TRANSCRIBER_API_KEY"
+        - secretKey: VLM_API_KEY
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "VLM_API_KEY"
+        - secretKey: AUTH_TOKEN
+          remoteRef:
+            key: "ocpbm01s2/openrag/api-key"
+            property: "AUTH_TOKEN"
+
+etcd:
+  podSecurityContext:
+    runAsNonRoot: true 
+    runAsUser: ~
+    runAsGroup: ~
+    fsGroup: ~
+    fsGroupChangePolicy: "OnRootMismatch"
+
+milvusCR:
+  enabled: true
+  mode: cluster
+  image: milvusdb/milvus:v2.6.0
+  msgStreamType: woodpecker
+  storage:
+    external: true
+    type: S3
+    endpoint: "mirai-f337-openrag.s3obj.ecs.objstore.r1.pi2.minint.fr:443"
+  config:
+    minio:
+      bucketName: "milvus"
+      rootPath: "milvus"
+      useSSL: true
+      ssl:
+        tlsCACert: /etc/milvus/certs/s3-ca.crt
+  volumes:
+    - name: s3-ca-cert
+      secret:
+        secretName: s3-mi-cert
+  volumeMounts:
+    - name: s3-ca-cert
+      mountPath: /etc/milvus/certs/s3-ca.crt
+      subPath: ca-s3.crt
+      readOnly: true

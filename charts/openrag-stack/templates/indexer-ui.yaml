@@ -18,8 +18,10 @@ spec:
         app.kubernetes.io/name: indexer-ui
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.indexerUi.podSecurityContext }}
       securityContext:
-        {{- toYaml .Values.indexerUi.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.indexerUi.serviceAccountName }}
       serviceAccountName: {{ . }}
       {{- end }}
@@ -27,8 +29,10 @@ spec:
         - name: indexer-ui
           image: {{ .Values.indexerUi.image }}
           imagePullPolicy: {{ .Values.indexerUi.imagePullPolicy }}
+          {{- with .Values.indexerUi.containerSecurityContext }}
           securityContext:
-            {{- toYaml .Values.indexerUi.containerSecurityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             {{- range $key, $value := .Values.indexerUi.env }}
             - name: {{ $key }}

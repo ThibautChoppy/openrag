@@ -25,6 +25,7 @@ ray:
     minReplicas: 1
     maxReplicas: 1
   serviceAccountName: ""
+  podSecurityContext: {}
   nodeSelector: {}
   resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
