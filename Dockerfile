@@ -27,6 +27,11 @@ ENV HF_HUB_CACHE=${HF_HUB_CACHE:-/app/model_weights/hub}
 # Set workdir for uv
 WORKDIR /app
 
+# HOME drives where uv installs the pinned Python and its cache; set it before
+# the install so those artifacts land under /app (owned by the non-root user
+# created below) instead of /root, avoiding a re-download at runtime.
+ENV HOME=/app
+
 # Install uv & setup venv
 COPY pyproject.toml uv.lock ./
 RUN pip3 install uv && \
@@ -46,4 +51,14 @@ COPY prompts/ /app/prompts/
 COPY conf/ /app/conf/
 ENV PYTHONPATH=/app/openrag/
 ENV APP_iPORT=${APP_iPORT:-8080}
+
+# Run as a non-root user to limit blast radius of any RCE in the app stack.
+# uv builds the venv into /app/.venv at runtime, and the app writes to
+# /app/{data,logs,model_weights}, so the user must own /app.
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --home-dir /app --no-create-home app \
+    && mkdir -p /app/data /app/logs /app/model_weights \
+    && chown -R 10001:10001 /app
+USER 10001:10001
+
 ENTRYPOINT ../entrypoint.sh
