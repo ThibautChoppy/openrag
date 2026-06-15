@@ -6,7 +6,10 @@ import threading
 from typing import ClassVar
 
 import ray
-from components.indexer.utils.text_sanitizer import sanitize_text
+from components.indexer.utils.text_sanitizer import (
+    neutralize_prompt_control_tokens,
+    sanitize_text,
+)
 from config import load_config
 from fast_langdetect import LangDetectConfig, LangDetector
 from langchain_core.documents.base import Document
@@ -108,12 +111,17 @@ def format_context(
 
     for i, doc in enumerate(docs):
         prefix = f"[Source {len(reduced_docs) + 1}]\n" if number_sources else ""
-        n_tokens = _length_function(doc.page_content)
+        # Neutralize control tokens so a poisoned document cannot forge a
+        # [Source N] block, inject a [Sources: ...] citation tag, or fake the
+        # inter-source separator. The [Source N] prefix below is the only
+        # trusted marker.
+        content = neutralize_prompt_control_tokens(doc.page_content)
+        n_tokens = _length_function(content)
         if prefix:
             n_tokens += _length_function(prefix)
         if total_tokens + n_tokens > max_context_tokens:
             break
-        reduced_docs.append(f"{prefix}{doc.page_content}")
+        reduced_docs.append(f"{prefix}{content}")
         included_indices.append(i)
         total_tokens += n_tokens
 
@@ -149,8 +157,9 @@ def format_web_context(
 
     for i, result in enumerate(web_results):
         n = start_index + i
-        title = sanitize_text(result.title)
-        body = sanitize_text(result.content) if result.content else sanitize_text(result.snippet)
+        title = neutralize_prompt_control_tokens(sanitize_text(result.title))
+        raw_body = result.content if result.content else result.snippet
+        body = neutralize_prompt_control_tokens(sanitize_text(raw_body))
         block = f"[Source {n}]\n{title}\n{body}"
         block_tokens = _length_function(block)
         if total_tokens + block_tokens > max_tokens and parts:
