@@ -4,7 +4,7 @@ include:
 
 x-openrag: &openrag_template
   # image: ghcr.io/linagora/openrag:dev-latest
-  image: linagoraai/openrag:latest
+  image: linagoraai/openrag:1.1.11
   build:
     context: .
     dockerfile: Dockerfile
@@ -56,7 +56,7 @@ x-vllm: &vllm_template
 services:
   # OpenRAG Indexer UI
   indexer-ui:
-    image: linagoraai/indexer-ui:latest
+    image: linagoraai/indexer-ui:1.1.11
     # build:
     #   context: ./extern/indexer-ui
     #   dockerfile: Dockerfile
