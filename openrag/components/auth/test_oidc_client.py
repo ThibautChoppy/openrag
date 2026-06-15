@@ -85,6 +85,7 @@ def _logout_token_payload(
         "iss": ISSUER,
         "aud": CLIENT_ID,
         "iat": now,
+        "exp": now + 120,
         "jti": "logout-jti-001",
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
     }
@@ -384,4 +385,35 @@ class TestVerifyLogoutToken:
 
         token = _sign_jwt(_logout_token_payload(sub=None, sid=None))
         with pytest.raises(ValueError, match="sub or sid"):
+            await client.verify_logout_token(token)
+
+    @pytest.mark.asyncio
+    async def test_missing_exp_raises(self, client):
+        _setup_discovery(client._mock_router)
+        _setup_jwks(client._mock_router)
+
+        payload = _logout_token_payload()
+        del payload["exp"]
+        token = _sign_jwt(payload)
+        with pytest.raises(ValueError, match="exp"):
+            await client.verify_logout_token(token)
+
+    @pytest.mark.asyncio
+    async def test_expired_logout_token_raises(self, client):
+        _setup_discovery(client._mock_router)
+        _setup_jwks(client._mock_router)
+
+        token = _sign_jwt(_logout_token_payload(extra={"exp": int(time.time()) - 10}))
+        with pytest.raises(ValueError, match="expired"):
+            await client.verify_logout_token(token)
+
+    @pytest.mark.asyncio
+    async def test_missing_jti_raises(self, client):
+        _setup_discovery(client._mock_router)
+        _setup_jwks(client._mock_router)
+
+        payload = _logout_token_payload()
+        del payload["jti"]
+        token = _sign_jwt(payload)
+        with pytest.raises(ValueError, match="jti"):
             await client.verify_logout_token(token)

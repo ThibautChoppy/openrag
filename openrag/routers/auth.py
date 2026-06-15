@@ -16,6 +16,7 @@ in ``token`` mode.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -520,6 +521,27 @@ async def callback(request: Request, code: str | None = None, state: str | None 
 # ---------------------------------------------------------------------------
 
 
+# In-process replay cache for back-channel logout token jti values, mapping
+# jti -> token exp. A logout token may only be consumed once (OIDC spec). This
+# is per-worker; with multiple workers a replay could still reach a different
+# worker, but back-channel logout is idempotent (re-revoking sessions is a
+# no-op), so this is a defence-in-depth guard, not the sole protection.
+_seen_logout_jti: dict[str, int] = {}
+
+
+def _logout_jti_is_replay(jti: str, exp: int) -> bool:
+    """Record a logout-token jti and report whether it was already seen."""
+    now = int(time.time())
+    # Prune expired entries to bound memory.
+    for old_jti, old_exp in list(_seen_logout_jti.items()):
+        if old_exp < now:
+            del _seen_logout_jti[old_jti]
+    if jti in _seen_logout_jti:
+        return True
+    _seen_logout_jti[jti] = exp
+    return False
+
+
 @router.post("/auth/backchannel-logout", include_in_schema=False)
 async def backchannel_logout(logout_token: str = Form(...)):
     """IdP-initiated logout per OIDC Back-Channel Logout spec.
@@ -544,6 +566,15 @@ async def backchannel_logout(logout_token: str = Form(...)):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"error": "invalid_request"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # Reject replays: a given logout token (jti) must only be processed once.
+    if claims.jti and _logout_jti_is_replay(claims.jti, claims.exp):
+        logger.warning(f"Replayed back-channel logout token ignored — jti={claims.jti!r}")
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "invalid_request", "error_description": "logout_token replayed"},
             headers={"Cache-Control": "no-store"},
         )
 
