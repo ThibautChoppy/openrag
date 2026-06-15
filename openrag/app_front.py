@@ -44,10 +44,11 @@ def _ensure_chainlit_auth_secret() -> None:
         return
     raise RuntimeError(
         "CHAINLIT_AUTH_SECRET is not set. Generate one with "
-        "`uv run chainlit create-secret` (or `python -c \"import secrets; "
-        "print(secrets.token_hex(32))\"`) and set it in the environment. "
+        '`uv run chainlit create-secret` (or `python -c "import secrets; '
+        'print(secrets.token_hex(32))"`) and set it in the environment. '
         "To run insecurely in development only, set ALLOW_NO_AUTH=true."
     )
+
 
 # Application internal URL (used to call the API from Chainlit)
 port = os.environ.get("APP_iPORT", "8080")
