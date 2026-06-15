@@ -1,3 +1,4 @@
+import os
 import re
 import secrets
 import time
@@ -11,6 +12,11 @@ from fastapi import HTTPException, UploadFile, status
 
 config = load_config()
 SERIALIZE_TIMEOUT = config.ray.indexer.serialize_timeout
+
+# Maximum accepted upload size. Streamed writes are bounded so a single request
+# cannot exhaust disk/RAM (a file-count quota alone does not limit bytes).
+# 0 or negative disables the limit. Override with MAX_UPLOAD_SIZE_MB.
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", "1024")) * 1024 * 1024
 
 
 def sanitize_filename(filename: str) -> str:
@@ -60,13 +66,25 @@ async def save_file_to_disk(
         filename = file.filename
     file_path = dest_dir / filename
 
-    async with aiofiles.open(file_path, "wb") as buffer:
-        # Non-blocking I/O
-        while True:
-            chunk = await file.read(chunk_size)
-            if not chunk:
-                break
-            await buffer.write(chunk)
+    total = 0
+    try:
+        async with aiofiles.open(file_path, "wb") as buffer:
+            # Non-blocking I/O
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if MAX_UPLOAD_SIZE_BYTES > 0 and total > MAX_UPLOAD_SIZE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File exceeds the maximum allowed size of {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB.",
+                    )
+                await buffer.write(chunk)
+    except HTTPException:
+        # Remove the partially written file before propagating.
+        file_path.unlink(missing_ok=True)
+        raise
 
     return file_path
 
