@@ -92,8 +92,18 @@ def is_ui_path(path: str) -> bool:
     return False
 
 
+def is_chainlit_path(path: str) -> bool:
+    """Match the mounted Chainlit app exactly, with a path boundary.
+
+    Using a bare ``startswith("/chainlit")`` would also match unrelated routes
+    like ``/chainlitX``, widening the unauthenticated bypass beyond the
+    Chainlit mount.
+    """
+    return path == "/chainlit" or path.startswith("/chainlit/")
+
+
 def is_bypass_path(path: str) -> bool:
-    return path in _BYPASS_PATHS or path.startswith("/chainlit")
+    return path in _BYPASS_PATHS or is_chainlit_path(path)
 
 
 def _allow_no_auth() -> bool:
@@ -154,7 +164,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # the bypass so Chainlit's own headerAuth callback can validate.
             if (
                 auth_mode == "oidc"
-                and path.startswith("/chainlit")
+                and is_chainlit_path(path)
                 and "text/html" in request.headers.get("accept", "").lower()
                 and not request.headers.get("authorization", "").lower().startswith("bearer ")
             ):
