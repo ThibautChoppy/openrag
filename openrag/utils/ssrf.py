@@ -18,7 +18,6 @@ import socket
 from urllib.parse import urlparse
 
 import httpx
-
 from utils.logger import get_logger
 
 logger = get_logger()

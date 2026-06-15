@@ -26,7 +26,6 @@ from limits.aio.strategies import MovingWindowRateLimiter
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-
 from utils.logger import get_logger
 
 logger = get_logger()
