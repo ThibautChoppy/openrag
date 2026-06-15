@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 from components.prompts import IMAGE_DESCRIBER
 from components.utils import get_vlm_semaphore, load_config
 from langchain_core.messages import HumanMessage
@@ -14,6 +15,7 @@ from PIL import Image
 from tqdm.asyncio import tqdm
 from utils.external_resource_errors import is_external_resource_error
 from utils.logger import get_logger
+from utils.ssrf import guard_request, is_blocked_url_literal
 
 logger = get_logger()
 config = load_config()
@@ -33,6 +35,10 @@ class BaseLoader(ABC):
     HTTP_IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((https?://[^)]+)\)")
     DATA_URI_IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((data:image/[^;]+;base64,[^)]+)\)")
     MIN_IMAGE_PIXELS = 784  # Qwen2.5-VL min_pixels threshold
+    # Cap remote image fetches so a malicious document can't point us at a
+    # huge body to exhaust memory; also bounds the data URI sent to the VLM.
+    MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
+    REMOTE_IMAGE_TIMEOUT = 10.0
 
     def __init__(self, **kwargs) -> None:
         self.page_sep = "[PAGE_SEP]"
@@ -85,6 +91,49 @@ class BaseLoader(ABC):
         """Check if string is a data URI."""
         return isinstance(data, str) and data.startswith("data:image/")
 
+    async def _fetch_remote_image_as_data_uri(self, url: str) -> str | None:
+        """Fetch a remote image URL in-process with SSRF protection and return
+        it as a data URI, or None if it is unsafe / unreachable / not an image.
+
+        Captioning a document's ``![](http://...)`` reference by handing the raw
+        URL to the VLM turns the VLM (and us) into an SSRF gadget: a poisoned
+        document can probe internal services (e.g. the cloud metadata endpoint).
+        We therefore never forward the URL: we fetch it ourselves, rejecting any
+        host that resolves to a non-global address and refusing redirects (a
+        classic SSRF bypass), then pass only the resulting bytes to the VLM.
+        """
+        if is_blocked_url_literal(url):
+            logger.warning("Blocked non-global image URL for captioning", url=url)
+            return None
+        try:
+            timeout = httpx.Timeout(self.REMOTE_IMAGE_TIMEOUT)
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=False,
+                event_hooks={"request": [guard_request]},
+            ) as client:
+                # Stream so the size cap is enforced as bytes arrive, rather than
+                # buffering an attacker-chosen huge body in full before rejecting.
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    content_type = resp.headers.get("content-type", "")
+                    if not content_type.startswith("image/"):
+                        logger.warning("Remote image URL is not an image", url=url, content_type=content_type)
+                        return None
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > self.MAX_REMOTE_IMAGE_BYTES:
+                            logger.warning("Remote image exceeds size cap", url=url, size=len(buf))
+                            return None
+                    data = bytes(buf)
+        except Exception as e:
+            logger.warning("Failed to fetch remote image for captioning", url=url, error=str(e)[:200])
+            return None
+
+        mime = content_type.split(";", 1)[0].strip()
+        return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
     async def get_image_description(
         self,
         image_data: Image.Image | str,
@@ -119,9 +168,13 @@ class BaseLoader(ABC):
                     image_url = f"data:image/png;base64,{img_b64}"
 
                 elif self._is_http_url(image_data):
-                    # Handle HTTP/HTTPS URL
-                    image_url = image_data
-                    logger.debug(f"Processing HTTP URL: {image_data}")
+                    # Fetch remote images ourselves (with SSRF guards) and pass a
+                    # data URI to the VLM, rather than letting the VLM fetch an
+                    # attacker-controlled URL. See _fetch_remote_image_as_data_uri.
+                    image_url = await self._fetch_remote_image_as_data_uri(image_data)
+                    if not image_url:
+                        return "<image_description>\n\nImage URL unavailable or blocked\n\n</image_description>"
+                    logger.debug(f"Fetched HTTP image URL in-process: {image_data}")
 
                 elif self._is_data_uri(image_data):
                     # Handle data URI - use as-is

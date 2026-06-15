@@ -126,7 +126,10 @@ prompts:
 loader:
   # Env: IMAGE_CAPTIONING, IMAGE_CAPTIONING_URL, SAVE_MARKDOWN
   image_captioning: true
-  image_captioning_url: true
+  # Off by default: captioning remote image URLs found in documents is an SSRF
+  # surface. When enabled, fetches are SSRF-guarded (non-global hosts blocked,
+  # redirects refused) and proxied in-process. See loaders/base.py.
+  image_captioning_url: false
   save_markdown: false
 
   mimetypes:

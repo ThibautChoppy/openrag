@@ -1,13 +1,11 @@
 import asyncio
-import ipaddress
-import socket
-from urllib.parse import urlparse
 
 import httpx
 import lxml.html
 from components.websearch.base import WebResult
 from html_to_markdown import convert
 from utils.logger import get_logger
+from utils.ssrf import guard_request, is_blocked_url_literal
 
 logger = get_logger()
 
@@ -47,49 +45,9 @@ class ContentFetcher:
             truncated = truncated[:last_space]
         return truncated.rstrip() + " [...]"
 
-    @staticmethod
-    def _is_loopback_url(url: str) -> bool:
-        """Block obviously-internal targets without a DNS lookup.
-
-        Rejects non-HTTP(S) schemes and any literal IP that is not globally
-        routable (loopback, private, link-local, etc.). Hostnames are passed
-        through here and validated against their *resolved* IPs in the request
-        hook below.
-        """
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return True
-        host = parsed.hostname or ""
-        if not host or host == "localhost":
-            return True
-        try:
-            return not ipaddress.ip_address(host).is_global
-        except ValueError:
-            return False  # Regular hostname → checked after DNS resolution
-
-    @staticmethod
-    async def _guard_request(request: httpx.Request) -> None:
-        """httpx request hook: block requests whose host resolves to a
-        non-global IP. Runs for the initial request and every redirect hop,
-        so a public hostname that resolves (or redirects) to an internal
-        address is rejected before the connection is used.
-        """
-        host = request.url.host
-        if not host:
-            raise httpx.RequestError("Blocked request with no host", request=request)
-        try:
-            infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
-        except socket.gaierror as e:
-            raise httpx.RequestError(f"DNS resolution failed for {host}", request=request) from e
-        for info in infos:
-            ip = info[4][0]
-            try:
-                addr = ipaddress.ip_address(ip)
-            except ValueError:
-                raise httpx.RequestError(f"Unparseable address for {host}", request=request)
-            if not addr.is_global:
-                logger.warning("Blocked SSRF attempt to non-global address", host=host, ip=ip)
-                raise httpx.RequestError(f"Blocked non-global address {ip} for {host}", request=request)
+    # SSRF guards are shared with the document image-URL captioner; see utils.ssrf.
+    _is_loopback_url = staticmethod(is_blocked_url_literal)
+    _guard_request = staticmethod(guard_request)
 
     async def _fetch_single(self, client: httpx.AsyncClient, url: str) -> str | None:
         """Fetch a single URL and extract text. Returns None on any failure."""
