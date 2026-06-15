@@ -250,19 +250,25 @@ reranker:
 indexerUi:
   enabled: true
 
-  image: "linagoraai/indexer-ui:1.1.11"
+  image: "linagoraai/indexer-ui:v1.1.11"
   imagePullPolicy: IfNotPresent
+
   replicaCount: 1
+
   env:
-    API_BASE_URL: "http://localhost:8080"
+    API_BASE_URL: "http://{{ .Release.Name }}-openrag:8080"
     INCLUDE_CREDENTIALS: "false"
+
   service:
     type: ClusterIP
     port: 3000
     targetPort: 3000
+
   ingress:
     enabled: false
+
   resources: {}
+
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
