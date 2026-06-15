@@ -492,11 +492,25 @@ class PartitionFileManager:
             s.commit()
             return True
 
-    def create_partition(self, partition: str, user_id: int):
+    def create_partition(self, partition: str, user_id: int, max_owned: int | None = None) -> str:
+        """Create a partition owned by ``user_id``.
+
+        When ``max_owned`` is a non-negative int, the owner-count check and the
+        insert happen in the same session so concurrent creates can't race past
+        the cap (the Vectordb actor serializes calls, making this atomic). Pass
+        ``None`` (or a negative value) to skip the cap (admins / unlimited).
+
+        Returns one of ``"created"``, ``"exists"``, ``"limit_exceeded"``.
+        """
         with self.Session() as s:
             if s.query(Partition).filter(Partition.partition == partition).first():
                 self.logger.warning(f"Partition '{partition}' already exists.")
-                return
+                return "exists"
+            if max_owned is not None and max_owned >= 0:
+                owned = s.query(PartitionMembership).filter_by(user_id=user_id, role="owner").count()
+                if owned >= max_owned:
+                    self.logger.warning(f"User {user_id} reached partition limit ({max_owned}).")
+                    return "limit_exceeded"
             p = Partition(partition=partition)
             s.add(p)
             # Add creator as owner
@@ -504,6 +518,7 @@ class PartitionFileManager:
             s.add(m)
             s.commit()
             self.logger.info(f"Partition '{partition}' created by user_id {user_id}.")
+            return "created"
 
     def list_user_partitions(self, user_id: int):
         """Return full partition objects (to_dict) with role for a given user."""

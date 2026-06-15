@@ -1307,10 +1307,11 @@ class MilvusDB(BaseVectorDB):
         self.partition_file_manager.update_partition_member_role(partition, user_id, new_role)
         self.logger.info(f"User_id {user_id} role updated to '{new_role}' in partition '{partition}'.")
 
-    async def create_partition(self, partition: str, user_id: int):
+    async def create_partition(self, partition: str, user_id: int, max_owned: int | None = None) -> str:
         self._check_user_exists(user_id)
-        self.partition_file_manager.create_partition(partition, user_id)
-        self.logger.info(f"Partition '{partition}' created by user_id {user_id}.")
+        result = self.partition_file_manager.create_partition(partition, user_id, max_owned)
+        self.logger.info(f"create_partition '{partition}' by user_id {user_id}: {result}")
+        return result
 
     async def add_partition_member(self, partition: str, user_id: int, role: str):
         self._check_partition_exists(partition)
