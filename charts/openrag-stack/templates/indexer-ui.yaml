@@ -36,7 +36,7 @@ spec:
           env:
             {{- range $key, $value := .Values.indexerUi.env }}
             - name: {{ $key }}
-              value: "{{ $value }}"
+              value: {{ tpl $value $ | quote }}
             {{- end }}
           ports:
             - containerPort: {{ .Values.indexerUi.service.targetPort }}
