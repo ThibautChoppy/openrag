@@ -221,7 +221,7 @@ Returns 204 No Content on successful deletion.
 )
 async def delete_file(
     partition: str,
-    file_id: str,
+    file_id: str = Depends(validate_file_id),
     indexer=Depends(get_indexer),
     vectordb=Depends(get_vectordb),
     user=Depends(require_partition_editor),

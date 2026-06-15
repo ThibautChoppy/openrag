@@ -106,6 +106,14 @@ def is_bypass_path(path: str) -> bool:
     return path in _BYPASS_PATHS or is_chainlit_path(path)
 
 
+def _allow_no_auth() -> bool:
+    """Whether the no-auth dev bypass (AUTH_TOKEN unset → admin) is allowed.
+
+    Read lazily so it can be toggled per-test, mirroring the other env reads.
+    """
+    return os.getenv("ALLOW_NO_AUTH", "false").strip().lower() == "true"
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware enforcing authentication for both token and oidc modes.
 
@@ -127,7 +135,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         vectordb = self._get_vectordb()
 
         # --- Dev mode: AUTH_MODE=token + AUTH_TOKEN unset → user 1 bypass.
-        if auth_mode == "token" and auth_token is None:
+        #     This disables authentication entirely (every request becomes the
+        #     admin user), so it must be opted into explicitly via
+        #     ALLOW_NO_AUTH=true. Without that flag a missing AUTH_TOKEN no
+        #     longer fails open: requests fall through to normal Bearer auth
+        #     and unauthenticated callers get 401.
+        if auth_mode == "token" and auth_token is None and _allow_no_auth():
+            logger.warning(
+                "ALLOW_NO_AUTH=true and AUTH_TOKEN is unset: authentication is DISABLED — "
+                "every request is treated as admin user 1. Never use this in production."
+            )
             user = await vectordb.get_user.remote(1)
             user_partitions = await vectordb.list_user_partitions.remote(1)
             request.state.user = user

@@ -14,7 +14,6 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
 ray.init(dashboard_host="0.0.0.0")
 
@@ -26,6 +25,7 @@ ray.init(dashboard_host="0.0.0.0")
 from components.auth.middleware import AuthMiddleware
 from routers.actors import router as actors_router
 from routers.auth import router as auth_router
+from routers.download import router as download_router
 from routers.extract import router as extract_router
 from routers.indexer import router as indexer_router
 from routers.monitoring import MonitoringMiddleware
@@ -256,7 +256,6 @@ app.add_middleware(
 )
 
 app.state.app_state = AppState(config)
-app.mount("/static", StaticFiles(directory=DATA_DIR.resolve(), check_dir=True), name="static")
 
 
 @app.get("/", include_in_schema=False)
@@ -296,6 +295,8 @@ def get_config():
 app.include_router(indexer_router, prefix="/indexer", tags=[Tags.INDEXER])
 # Mount the extract router
 app.include_router(extract_router, prefix="/extract", tags=[Tags.EXTRACT])
+# Authorized source-file download (replaces the open /static mount)
+app.include_router(download_router, tags=[Tags.EXTRACT])
 # Mount the search router
 app.include_router(search_router, prefix="/search", tags=[Tags.SEARCH])
 # Mount the partition router
