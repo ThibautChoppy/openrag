@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import consts
@@ -115,8 +114,7 @@ def __prepare_sources(request: Request, docs: list[Document], web_results: list 
     links = []
     for doc in docs:
         doc_metadata = dict(doc.metadata)
-        filename = Path(doc_metadata.get("source")).name
-        file_url = str(request.url_for("static", path=filename))
+        file_url = str(request.url_for("download_source", extract_id=doc_metadata["_id"]))
         encoded_url = quote(file_url, safe=":/")
         links.append(
             {

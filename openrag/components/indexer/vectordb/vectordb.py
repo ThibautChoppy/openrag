@@ -549,8 +549,10 @@ class MilvusDB(BaseVectorDB):
                 id_list = ", ".join(f'"{fid}"' for fid in file_ids)
                 expr_parts.append(f"file_id IN [{id_list}]")
 
-        # Join all parts with " and " only if there are multiple conditions
-        expr = " and ".join(expr_parts) if expr_parts else ""
+        # Join all parts with " and ", wrapping each in parentheses so a
+        # user-supplied filter cannot escape the partition scope via operator
+        # precedence (Milvus binds `and` tighter than `or`).
+        expr = " and ".join(f"({part})" for part in expr_parts) if expr_parts else ""
 
         try:
             query_vector = await self.embedder.aembed_query(query)
