@@ -23,6 +23,32 @@ AUTH_MODE = os.environ.get("AUTH_MODE", "token").strip().lower()
 # Chainlit authentication
 CHAINLIT_AUTH_SECRET = os.environ.get("CHAINLIT_AUTH_SECRET")
 
+_DEV_AUTH_SECRET = "default_secret_for_openrag_ui"
+
+
+def _ensure_chainlit_auth_secret() -> None:
+    """Make sure CHAINLIT_AUTH_SECRET is set before Chainlit signs sessions.
+
+    Falling back to a public constant lets anyone forge UI session cookies, so
+    we fail-fast when it is unset. The insecure default is only permitted with
+    the same explicit dev opt-in that disables backend auth (ALLOW_NO_AUTH).
+    """
+    if CHAINLIT_AUTH_SECRET:
+        return
+    if os.environ.get("ALLOW_NO_AUTH", "").strip().lower() == "true":
+        logger.warning(
+            "CHAINLIT_AUTH_SECRET is unset; using an insecure built-in default "
+            "because ALLOW_NO_AUTH=true. DEV ONLY — UI sessions are forgeable."
+        )
+        os.environ["CHAINLIT_AUTH_SECRET"] = _DEV_AUTH_SECRET
+        return
+    raise RuntimeError(
+        "CHAINLIT_AUTH_SECRET is not set. Generate one with "
+        "`uv run chainlit create-secret` (or `python -c \"import secrets; "
+        "print(secrets.token_hex(32))\"`) and set it in the environment. "
+        "To run insecurely in development only, set ALLOW_NO_AUTH=true."
+    )
+
 # Application internal URL (used to call the API from Chainlit)
 port = os.environ.get("APP_iPORT", "8080")
 INTERNAL_BASE_URL = f"http://localhost:{port}"  # Default fallback URL
@@ -101,11 +127,7 @@ if PERSISTENCY:
 
 
 if AUTH_TOKEN and AUTH_MODE != "oidc":
-    if not CHAINLIT_AUTH_SECRET:
-        # logger.warning(
-        #     "`CHAINLIT_AUTH_SECRET` is not set a default value will be used. Not recommended for production."
-        # )
-        os.environ["CHAINLIT_AUTH_SECRET"] = "default_secret_for_openrag_ui"  # Set default value
+    _ensure_chainlit_auth_secret()
 
     @cl.password_auth_callback
     async def auth_callback(username: str, password: str):
@@ -136,8 +158,7 @@ if AUTH_TOKEN and AUTH_MODE != "oidc":
             return None
 
 elif AUTH_MODE == "oidc":
-    if not CHAINLIT_AUTH_SECRET:
-        os.environ["CHAINLIT_AUTH_SECRET"] = "default_secret_for_openrag_ui"
+    _ensure_chainlit_auth_secret()
 
     @cl.header_auth_callback
     async def header_auth_callback(headers: dict) -> cl.User | None:
