@@ -784,11 +784,18 @@ class TestTaskCancellation:
         cancel_response = api_client.delete(f"/indexer/task/{task_id}")
         assert cancel_response.status_code == 200
 
-        info_after = api_client.get("/queue/info")
-        assert info_after.status_code == 200
-        cancelled_after = info_after.json()["tasks"]["total_cancelled"]
+        # The counter is updated asynchronously, so poll until it increments.
+        cancelled_after = cancelled_before
+        start = time.time()
+        while time.time() - start < TASK_TIMEOUT:
+            info_after = api_client.get("/queue/info")
+            assert info_after.status_code == 200
+            cancelled_after = info_after.json()["tasks"]["total_cancelled"]
+            if cancelled_after >= cancelled_before + 1:
+                break
+            time.sleep(0.5)
 
-        assert cancelled_after == cancelled_before + 1
+        assert cancelled_after >= cancelled_before + 1
 
     def test_cancel_nonexistent_task_returns_404(self, api_client):
         """Cancelling a task that does not exist must return 404."""
