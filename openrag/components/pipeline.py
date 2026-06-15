@@ -137,7 +137,6 @@ class RetrieverPipeline:
         if not docs and milvus_filter and self.allow_filterless_fallback:
             logger.warning(
                 "Temporal filter dropped: no documents matched, retrying without filter",
-                query=str(query.query),
                 filter=milvus_filter,
                 partition=partition,
             )
