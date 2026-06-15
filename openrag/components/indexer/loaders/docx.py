@@ -82,6 +82,14 @@ class DocxLoader(BaseLoader):
         return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
     def get_images_from_zip(self, input_file):
+        # Parser-bomb caps: bound how many embedded media entries we iterate and
+        # how large any single (decompressed) entry may be, so a crafted docx
+        # can't exhaust memory via thousands of parts or one huge image.
+        max_entries, max_entry_bytes = 2000, 100 * 1024 * 1024
+        loader_cfg = getattr(getattr(self, "config", None), "loader", None)
+        if loader_cfg is not None:
+            max_entries = int(loader_cfg.get("max_archive_entries", max_entries))
+            max_entry_bytes = int(loader_cfg.get("max_archive_entry_bytes", max_entry_bytes))
         try:
             docx = zipfile.ZipFile(input_file, "r")
         except zipfile.BadZipFile:
@@ -93,13 +101,26 @@ class DocxLoader(BaseLoader):
             image_files = [f for f in file_names if f.startswith("word/media/")]
             if not image_files:
                 return []
+            if len(image_files) > max_entries:
+                logger.warning(
+                    "Capping embedded media extraction", path=str(input_file), found=len(image_files), cap=max_entries
+                )
+                image_files = image_files[:max_entries]
 
-            images_not_in_order, order = [], []
-
-            # the images got from the original file is not in the right order
-            # but the target_ref contains the position of the image in the document
+            # Map original position (from filename) -> image. Using a dict avoids
+            # allocating a list sized by an attacker-controlled index.
+            by_order: dict[int, Image.Image] = {}
 
             for image_file in image_files:
+                info = docx.getinfo(image_file)
+                if info.file_size > max_entry_bytes:
+                    logger.warning(
+                        "Skipping oversized embedded media entry",
+                        entry=image_file,
+                        size=info.file_size,
+                        cap=max_entry_bytes,
+                    )
+                    continue
                 image_data = docx.read(image_file)
                 image_extension = image_file.split(".")[-1].lower()
                 try:
@@ -110,15 +131,28 @@ class DocxLoader(BaseLoader):
                     logger.warning(f"Skipping unsupported media file {image_file}: {e}")
                     continue
 
-                images_not_in_order.append(image)
-                order.append(order_num)
+                # order_num is the 1-based position parsed from the (untrusted)
+                # filename; a non-positive value would index images[pos-1] wrongly
+                # or raise. Skip such malformed entries.
+                if order_num < 1:
+                    logger.warning(f"Skipping media file with non-positive index: {image_file}")
+                    continue
 
-            if not images_not_in_order:
+                by_order[order_num] = image
+
+            if not by_order:
                 return []
 
-            # Reorder images by their original position in the document
-            max_order = max(order)
-            images = [None] * max_order
-            for i, pos in enumerate(order):
-                images[pos - 1] = images_not_in_order[i]
-            return images
+            # Reorder images by their original document position, preserving None
+            # gaps for skipped (unsupported) media so downstream caption alignment
+            # is unchanged. The position index comes from the filename, so guard
+            # against an attacker-controlled huge index by only materialising the
+            # positional array when the max index is within the entry cap;
+            # otherwise fall back to a compact ordered list.
+            max_order = max(by_order)
+            if max_order <= max_entries:
+                images = [None] * max_order
+                for pos, img in by_order.items():
+                    images[pos - 1] = img
+                return images
+            return [by_order[k] for k in sorted(by_order)]

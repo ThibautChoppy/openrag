@@ -261,16 +261,31 @@ class MarkerPool:
 
     async def process_pdf(self, file_path: str):
         chunk_size = self.config.loader.marker_chunk_size
+        # Parser-bomb cap: never process more than max_pdf_pages from one file.
+        max_pages = int(self.config.loader.get("max_pdf_pages", 2000))
+
+        total_pages = self._get_page_count(file_path)
+        capped = max_pages > 0 and total_pages > max_pages
+        if capped:
+            self.logger.warning(
+                f"PDF has {total_pages} pages; processing only the first {max_pages} (max_pdf_pages cap)"
+            )
+        page_count = min(total_pages, max_pages) if max_pages > 0 else total_pages
 
         if chunk_size <= 0:
-            return await self._process_chunk(file_path, page_range=None, label="(all pages)")
+            # When capped, restrict to the first page_count pages instead of all.
+            page_range = list(range(page_count)) if capped else None
+            label = f"(first {page_count}p)" if capped else "(all pages)"
+            return await self._process_chunk(file_path, page_range=page_range, label=label)
 
-        page_count = self._get_page_count(file_path)
         chunks = self._create_chunks(page_count, chunk_size)
 
         if len(chunks) == 1:
             page_range, label = chunks[0]
-            return await self._process_chunk(file_path, page_range=None, label=label)
+            # When capped, the single chunk only covers the first page_count pages,
+            # so we must pass that explicit range — page_range=None would process
+            # the whole file and bypass max_pdf_pages. Uncapped, None means "all".
+            return await self._process_chunk(file_path, page_range=(page_range if capped else None), label=label)
 
         self.logger.info(
             f"Splitting {page_count}-page PDF into {len(chunks)} chunks of ~{chunk_size} pages for parallel processing"

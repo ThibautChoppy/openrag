@@ -134,6 +134,13 @@ loader:
   image_captioning_url: false
   save_markdown: false
 
+  # Parser-bomb mitigations: bound fan-out/recursion/page counts so a small
+  # malicious file can't exhaust CPU/memory during ingestion.
+  max_attachments: 50        # attachments processed per .eml
+  max_eml_depth: 3           # nested .eml-in-.eml recursion depth
+  max_archive_entries: 2000  # embedded parts iterated per docx/pptx (zip fan-out)
+  max_pdf_pages: 2000        # pages processed per PDF
+
   mimetypes:
     text/plain: .txt
     text/markdown: .md

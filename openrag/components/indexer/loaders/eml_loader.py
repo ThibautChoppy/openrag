@@ -26,6 +26,10 @@ class EmlLoader(BaseLoader):
         self.kwargs = kwargs
         # Get available loaders for processing attachments
         self.loader_classes = get_loader_classes(config=self.config)
+        # Parser-bomb caps (a nested .eml recurses back into this loader).
+        self.eml_depth = int(kwargs.get("eml_depth", 0))
+        self.max_attachments = int(self.config.loader.get("max_attachments", 50))
+        self.max_eml_depth = int(self.config.loader.get("max_eml_depth", 3))
 
     async def aload_document(self, file_path, metadata: dict | None = None, save_markdown: bool = False):
         try:
@@ -66,6 +70,11 @@ class EmlLoader(BaseLoader):
                     # Handle attachments
                     filename = part.get_filename()
                     if filename:
+                        # Enforce the per-email cap BEFORE decoding the payload so a
+                        # malicious message with thousands of attachments can't make
+                        # us decode them all just to discard the overflow.
+                        if len(email_data["attachment"]) >= self.max_attachments:
+                            continue
                         payload = part.get_payload(decode=True)
                         if payload:
                             attachment_info = {
@@ -126,15 +135,25 @@ class EmlLoader(BaseLoader):
                             # Check if we have a loader for this file type
                             loader_cls = self.loader_classes.get(file_ext)
 
+                            # Stop nested .eml recursion past the configured depth
+                            # so an email-in-email chain can't blow the stack / CPU.
+                            if file_ext == ".eml" and self.eml_depth >= self.max_eml_depth:
+                                attachments_text += "Nested email attachment skipped (max depth reached)\n---\n"
+                                continue
+
                             if loader_cls:
                                 # Save attachment to temporary file
                                 with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
                                     temp_file.write(attachment["raw"])
                                     temp_file_path = temp_file.name
 
+                                # Sub-loaders inherit our kwargs; bump the eml depth
+                                # so nested EmlLoaders enforce the recursion cap.
+                                child_kwargs = {**self.kwargs, "eml_depth": self.eml_depth + 1}
+
                                 try:
                                     # Use appropriate loader to process attachment
-                                    loader = loader_cls(**self.kwargs)
+                                    loader = loader_cls(**child_kwargs)
                                     attachment_doc = await loader.aload_document(
                                         temp_file_path,
                                         metadata={"source": f"attachment:{filename}"},
