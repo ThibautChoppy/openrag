@@ -27,6 +27,7 @@ ray.init(dashboard_host=os.environ.get("RAY_DASHBOARD_HOST", "127.0.0.1"))
 
 
 from components.auth.middleware import AuthMiddleware
+from components.rate_limit import RateLimitMiddleware
 from routers.actors import router as actors_router
 from routers.auth import router as auth_router
 from routers.download import router as download_router
@@ -217,7 +218,11 @@ class TokenRedactingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Register middlewares (order matters - last added runs first)
+# Register middlewares (order matters - last added runs first, i.e. is the
+# outermost layer). RateLimitMiddleware is added first so it is the innermost
+# layer and runs *after* AuthMiddleware has populated request.state.user,
+# letting it key limits on the authenticated user (IP fallback otherwise).
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware, get_vectordb=get_vectordb)
 app.add_middleware(TokenRedactingMiddleware)
 app.add_middleware(MonitoringMiddleware)
