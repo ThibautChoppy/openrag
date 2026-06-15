@@ -290,6 +290,8 @@ class OIDCClient:
         if isinstance(aud, list):
             if self.client_id not in aud:
                 raise ValueError(f"ID token aud {aud!r} does not contain client_id {self.client_id!r}")
+            if len(aud) > 1 and decoded.get("azp") != self.client_id:
+                raise ValueError(f"ID token azp {decoded.get('azp')!r} != client_id {self.client_id!r}")
         elif aud != self.client_id:
             raise ValueError(f"ID token aud {aud!r} != client_id {self.client_id!r}")
 
@@ -349,6 +351,8 @@ class OIDCClient:
         if isinstance(aud, list):
             if self.client_id not in aud:
                 raise ValueError(f"logout_token aud {aud!r} does not contain client_id {self.client_id!r}")
+            if len(aud) > 1 and decoded.get("azp") != self.client_id:
+                raise ValueError(f"logout_token azp {decoded.get('azp')!r} != client_id {self.client_id!r}")
         elif aud != self.client_id:
             raise ValueError(f"logout_token aud {aud!r} != client_id {self.client_id!r}")
 
