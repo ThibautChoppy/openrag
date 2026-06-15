@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class UserBase(BaseModel):
@@ -7,6 +7,15 @@ class UserBase(BaseModel):
     email: str | None = Field(default=None, examples=[None])
     is_admin: bool = False
     file_quota: int | None = Field(default=10)
+
+    @field_validator("external_user_id", mode="before")
+    @classmethod
+    def _empty_external_id_to_none(cls, v):
+        # Coerce "" / whitespace to NULL so it can't collide on the unique index
+        # (Postgres allows many NULLs but only one empty string).
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
 
 class UserCreate(UserBase):
