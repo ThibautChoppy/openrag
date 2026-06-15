@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,11 @@ task_state_manager = get_task_state_manager()
 SUPER_ADMIN_MODE = os.getenv("SUPER_ADMIN_MODE", "false").lower() == "true"
 DATA_DIR = config.paths.data_dir
 
-FORBIDDEN_CHARS_IN_FILE_ID = set("/")  # set('"<>#%{}|\\^`[]')
+# Identifiers (file_id, partition name) are interpolated into Milvus filter
+# expression strings (e.g. `file_id == "..."`). Restrict them to a safe
+# allowlist so quotes / brackets / operators cannot break out of the literal
+# and inject boolean logic that escapes the partition scope.
+_VALID_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9._:\-]+")
 LOG_FILE = Path(config.paths.log_dir or "logs") / "app.json"
 
 # supported file formats or mimetypes
@@ -86,6 +91,7 @@ async def ensure_partition_role(
     required_role: str,
 ):
     """Ensure the user has at least `required_role` for the partition."""
+    assert_valid_partition_name(partition)
     # Super-admin bypass
     vectordb = get_vectordb()
     if SUPER_ADMIN_MODE and user.get("is_admin"):
@@ -282,18 +288,32 @@ async def check_user_file_quota(
 
 
 def is_file_id_valid(file_id: str) -> bool:
-    return not any(c in file_id for c in FORBIDDEN_CHARS_IN_FILE_ID)
+    return bool(file_id) and _VALID_IDENTIFIER_RE.fullmatch(file_id) is not None
 
 
 async def validate_file_id(file_id: str):
+    if not file_id.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File ID cannot be empty.")
     if not is_file_id_valid(file_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File ID contains forbidden characters: {', '.join(FORBIDDEN_CHARS_IN_FILE_ID)}",
+            detail="File ID may only contain letters, digits, '.', '_', ':' and '-'.",
         )
-    if not file_id.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File ID cannot be empty.")
     return file_id
+
+
+def assert_valid_partition_name(partition: str) -> None:
+    """Reject partition names that could inject into Milvus filter expressions.
+
+    Raises HTTP 400 for names outside the safe identifier allowlist. Used both
+    when a partition is created and on every partition-scoped operation, so a
+    crafted name can never reach a filter string.
+    """
+    if not partition or _VALID_IDENTIFIER_RE.fullmatch(partition) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Partition name may only contain letters, digits, '.', '_', ':' and '-'.",
+        )
 
 
 async def validate_metadata(metadata: Any | None = Form(None)):

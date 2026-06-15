@@ -12,6 +12,7 @@ from .utils import (
     current_user_or_admin_partitions_list,
     require_partition_viewer,
     require_partitions_viewer,
+    validate_file_id,
 )
 
 _config = load_config()
@@ -329,8 +330,8 @@ Find specific information within a single document using semantic search.
 async def search_file(
     request: Request,
     partition: str,
-    file_id: str,
     search_params: Annotated[CommonSearchParams, Depends()],
+    file_id: str = Depends(validate_file_id),
     indexer=Depends(get_indexer),
     vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),

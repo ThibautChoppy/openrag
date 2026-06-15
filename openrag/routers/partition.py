@@ -8,9 +8,11 @@ from utils.logger import get_logger
 
 from .utils import (
     ROLE_HIERARCHY,
+    assert_valid_partition_name,
     partitions_with_details,
     require_partition_owner,
     require_partition_viewer,
+    validate_file_id,
 )
 
 logger = get_logger()
@@ -143,7 +145,7 @@ Returns file information including:
 async def get_file(
     request: Request,
     partition: str,
-    file_id: str,
+    file_id: str = Depends(validate_file_id),
     limit: int = 2000,
     vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
@@ -225,6 +227,7 @@ Returns 409 Conflict if partition already exists.
 """,
 )
 async def create_partition(request: Request, partition: str, vectordb=Depends(get_vectordb)):
+    assert_valid_partition_name(partition)
     if await vectordb.partition_exists.remote(partition):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -457,7 +460,7 @@ For email threads with parallel branches, each branch has its own ancestor path.
 async def get_file_ancestors(
     request: Request,
     partition: str,
-    file_id: str,
+    file_id: str = Depends(validate_file_id),
     max_ancestor_depth: int | None = None,  # Optional limit on ancestor depth
     vectordb=Depends(get_vectordb),
     partition_viewer=Depends(require_partition_viewer),
