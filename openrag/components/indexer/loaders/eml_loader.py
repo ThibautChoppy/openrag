@@ -70,9 +70,7 @@ class EmlLoader(BaseLoader):
                     # Handle attachments
                     filename = part.get_filename()
                     if filename:
-                        # Enforce the per-email cap BEFORE decoding the payload so a
-                        # malicious message with thousands of attachments can't make
-                        # us decode them all just to discard the overflow.
+                        # Cap attachments before decoding (don't decode the overflow).
                         if len(email_data["attachment"]) >= self.max_attachments:
                             continue
                         payload = part.get_payload(decode=True)
@@ -135,8 +133,7 @@ class EmlLoader(BaseLoader):
                             # Check if we have a loader for this file type
                             loader_cls = self.loader_classes.get(file_ext)
 
-                            # Stop nested .eml recursion past the configured depth
-                            # so an email-in-email chain can't blow the stack / CPU.
+                            # Stop nested .eml recursion past the depth limit.
                             if file_ext == ".eml" and self.eml_depth >= self.max_eml_depth:
                                 attachments_text += "Nested email attachment skipped (max depth reached)\n---\n"
                                 continue
@@ -147,8 +144,7 @@ class EmlLoader(BaseLoader):
                                     temp_file.write(attachment["raw"])
                                     temp_file_path = temp_file.name
 
-                                # Sub-loaders inherit our kwargs; bump the eml depth
-                                # so nested EmlLoaders enforce the recursion cap.
+                                # Bump eml depth for nested loaders.
                                 child_kwargs = {**self.kwargs, "eml_depth": self.eml_depth + 1}
 
                                 try:

@@ -232,11 +232,9 @@ async def create_partition(request: Request, partition: str, vectordb=Depends(ge
     user = request.state.user
     user_id = user["id"]
 
-    # Cap how many partitions a non-admin may own so any authenticated user
-    # can't exhaust storage/metadata by creating partitions without bound.
-    # The count-and-create is performed atomically in the Vectordb actor (which
-    # serializes calls), so concurrent requests can't race past the cap.
-    # max_owned=None bypasses the cap (admins); MAX_PARTITIONS_PER_USER < 0 too.
+    # Cap partitions per non-admin user. The count+create is done atomically in
+    # the Vectordb actor (serialized), so concurrent requests can't race past it.
+    # max_owned=None (admin) or < 0 disables the cap.
     max_owned = None if user.get("is_admin", False) else int(os.environ.get("MAX_PARTITIONS_PER_USER", "100"))
 
     result = await vectordb.create_partition.remote(partition=partition, user_id=user_id, max_owned=max_owned)

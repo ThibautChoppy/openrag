@@ -1,11 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
-# Default-deny ingress baseline: applies to every pod in the namespace
-# (podSelector: {}). Two allowances:
-#   1. any pod in the same namespace (intra-stack traffic), and
-#   2. the public HTTP ports, reachable from anywhere (Ingress controller).
-# Everything else — notably the unauthenticated Ray dashboard (8265), GCS
-# (6379), Ray client (10001), Postgres and Milvus — is only reachable from
-# within the namespace.
+# Default-deny ingress for all pods, allowing only same-namespace traffic and
+# the public HTTP ports. Keeps the Ray dashboard (8265), Postgres, Milvus, etc.
+# off-limits from outside the namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

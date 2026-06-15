@@ -282,9 +282,8 @@ class MarkerPool:
 
         if len(chunks) == 1:
             page_range, label = chunks[0]
-            # When capped, the single chunk only covers the first page_count pages,
-            # so we must pass that explicit range — page_range=None would process
-            # the whole file and bypass max_pdf_pages. Uncapped, None means "all".
+            # When capped, pass the explicit range (None would process all pages
+            # and bypass max_pdf_pages); uncapped, None means "all".
             return await self._process_chunk(file_path, page_range=(page_range if capped else None), label=label)
 
         self.logger.info(

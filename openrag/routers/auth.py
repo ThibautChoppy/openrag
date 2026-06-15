@@ -521,11 +521,8 @@ async def callback(request: Request, code: str | None = None, state: str | None 
 # ---------------------------------------------------------------------------
 
 
-# In-process replay cache for back-channel logout token jti values, mapping
-# jti -> token exp. A logout token may only be consumed once (OIDC spec). This
-# is per-worker; with multiple workers a replay could still reach a different
-# worker, but back-channel logout is idempotent (re-revoking sessions is a
-# no-op), so this is a defence-in-depth guard, not the sole protection.
+# Seen logout-token jti -> exp, so a token is only consumed once. Per-worker;
+# logout is idempotent so this is just defence-in-depth.
 _seen_logout_jti: dict[str, int] = {}
 
 
@@ -602,15 +599,12 @@ async def backchannel_logout(logout_token: str = Form(...)):
 
 
 def _is_csrf_safe_navigation(request: Request) -> bool:
-    """Reject the silent logout-CSRF vector while keeping the redirect-based UX.
+    """Block cross-site CSRF logout while allowing top-level navigation.
 
-    Logout must remain reachable via top-level GET navigation (the OIDC
-    RP-initiated logout redirects the browser to the IdP), so we can't simply
-    require POST. Instead we use the Fetch Metadata headers: a forged request
-    from `<img>`/`<script>`/cross-site `fetch` is a cross-site *non-navigation*
-    request and is blocked; genuine top-level navigations (Sec-Fetch-Mode:
-    navigate) and same-origin requests pass. Browsers that don't send these
-    headers (older) fall through as allowed.
+    Logout stays a GET (OIDC redirects to the IdP), so instead of requiring POST
+    we use Fetch Metadata: a cross-site non-navigation request (forged <img> etc.)
+    is blocked; navigations and same-origin requests pass. Older browsers that
+    omit these headers are allowed.
     """
     site = request.headers.get("sec-fetch-site")
     mode = request.headers.get("sec-fetch-mode")

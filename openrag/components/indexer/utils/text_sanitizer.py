@@ -95,36 +95,23 @@ def sanitize_text(
     return text
 
 
-# Our RAG context uses a few control tokens that an attacker could embed in a
-# document to forge citations or fake source boundaries:
-#   - "[Source N]"        : the per-chunk block marker prepended in format_context
-#   - "[Sources: 1, 3]"   : the answer tag the LLM appends and we parse back
-#                           (the parser also accepts the unbracketed form
-#                            "Sources: 1, 3" at end-of-line)
-#   - "----------"        : the inter-source separator (SOURCE_SEPARATOR)
-# Neutralize them inside untrusted chunk/web text so they can only originate
-# from our own formatter, never from document content.
+# Control tokens a document could embed to forge citations or source boundaries:
+# "[Source N]" (block marker), "[Sources: 1, 3]" / "Sources: 1, 3" (answer tag),
+# and "----------" (separator). Neutralize them in untrusted text.
 _INJECT_SOURCE_BLOCK_RE = re.compile(r"\[\s*(sources?)\b", re.IGNORECASE)
 _INJECT_SOURCES_TAG_RE = re.compile(r"(?im)^([ \t]*)(sources?)(\s*:\s*)(\[?[\d,\s]+\]?)[ \t]*$")
 _INJECT_SEPARATOR_RE = re.compile(r"-{4,}")
 
 
 def neutralize_prompt_control_tokens(text: str) -> str:
-    """Defang RAG control tokens that appear inside untrusted text.
-
-    Keeps the text human-readable while ensuring an embedded ``[Source 5]``,
-    ``[Sources: 1, 2]``/``Sources: 1, 2`` or ``----------`` separator can no
-    longer be mistaken for a marker our pipeline produced.
-    """
+    """Defang RAG control tokens in untrusted text so they can't fake markers."""
     if not text:
         return text
-    # Replace the opening bracket of any [Source...] / [Sources...] token with a
-    # paren so it can't open a fake source block or citation tag.
+    # "[Source...]" / "[Sources...]" -> open paren so it can't start a marker.
     text = _INJECT_SOURCE_BLOCK_RE.sub(r"(\1", text)
-    # Break the unbracketed line-terminal "Sources: 1, 2" form the answer parser
-    # also matches, by replacing the colon.
+    # Break the unbracketed "Sources: 1, 2" line form the parser also matches.
     text = _INJECT_SOURCES_TAG_RE.sub(r"\1\2 \4", text)
-    # Cap long hyphen runs so a chunk can't reproduce the source separator.
+    # Cap long hyphen runs so they can't reproduce the separator.
     text = _INJECT_SEPARATOR_RE.sub("---", text)
     return text
 

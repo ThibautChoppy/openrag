@@ -64,8 +64,7 @@ rdb:
   host: rdb
   port: 5432
   user: root
-  # No default: supply via the POSTGRES_PASSWORD env var. Shipping a known
-  # password would be a usable default credential on any exposed deployment.
+  # No default; set via the POSTGRES_PASSWORD env var.
   password: ""
   default_file_quota: -1
 
@@ -92,9 +91,7 @@ map_reduce:
 
 # --- Logging ---
 # Env: LOG_LEVEL
-# INFO by default: DEBUG logs (and the long-lived JSON sink) persist user
-# queries and other potentially sensitive request data. Raise to DEBUG only
-# for short-lived troubleshooting.
+# INFO by default; DEBUG persists user queries and request data to logs.
 verbose:
   level: INFO
 
@@ -131,14 +128,12 @@ prompts:
 loader:
   # Env: IMAGE_CAPTIONING, IMAGE_CAPTIONING_URL, SAVE_MARKDOWN
   image_captioning: true
-  # Off by default: captioning remote image URLs found in documents is an SSRF
-  # surface. When enabled, fetches are SSRF-guarded (non-global hosts blocked,
-  # redirects refused) and proxied in-process. See loaders/base.py.
+  # Off by default (captioning remote image URLs is an SSRF surface). When on,
+  # fetches are SSRF-guarded and proxied in-process. See loaders/base.py.
   image_captioning_url: false
   save_markdown: false
 
-  # Parser-bomb mitigations: bound fan-out/recursion/page counts so a small
-  # malicious file can't exhaust CPU/memory during ingestion.
+  # Bound fan-out/recursion/page counts during ingestion (parser-bomb guard).
   max_attachments: 50        # attachments processed per .eml
   max_eml_depth: 3           # nested .eml-in-.eml recursion depth
   max_archive_entries: 2000  # embedded parts iterated per docx/pptx (zip fan-out)

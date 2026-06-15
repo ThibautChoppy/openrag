@@ -323,9 +323,7 @@ async def openai_chat_completion(
         truncate(str(request.messages)),
     )
 
-    # Bound the caller's input size in every mode. RAG-injected context is added
-    # server-side and separately capped (max_context_tokens), but the user's own
-    # messages must be limited regardless of direct-LLM vs RAG.
+    # Bound the caller's input size in both RAG and direct-LLM modes.
     check_tokens_limit(request, log)
     if is_direct_llm_model(request):
         partitions = None

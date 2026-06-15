@@ -148,8 +148,7 @@ async def add_file(
     try:
         file_path = await save_file_to_disk(file, save_dir, with_random_prefix=True)
     except Exception as e:
-        # Log the full error server-side; return a generic message so we don't
-        # leak filesystem paths or internals to the client.
+        # Log details server-side; return a generic message (no paths/internals).
         logger.exception("Failed to save file to disk.", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -494,8 +493,7 @@ async def get_task_error(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No error found for task '{task_id}'.",
         )
-    # The raw traceback exposes filesystem paths and internals; only return it
-    # to admins. Task owners get a generic failure indicator.
+    # Only admins get the raw traceback (it exposes paths/internals).
     if user and user.get("is_admin", False):
         return {"task_id": task_id, "traceback": error.splitlines()}
     return {"task_id": task_id, "traceback": ["Task failed. Contact an administrator for details."]}

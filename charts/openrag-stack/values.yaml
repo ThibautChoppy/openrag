@@ -1,8 +1,6 @@
 # === Network isolation ===
-# Default-deny ingress for all pods in the release namespace, allowing only
-# intra-namespace traffic plus the public HTTP ports below. This isolates the
-# unauthenticated Ray dashboard (8265), GCS (6379), Postgres, Milvus, etc. from
-# outside the namespace. Disable only if you manage isolation elsewhere.
+# Default-deny ingress; allow only same-namespace traffic and the public HTTP
+# ports below. Isolates the Ray dashboard, Postgres, Milvus, etc.
 networkPolicy:
   enabled: true
   # Ports reachable from outside the namespace (e.g. via the Ingress controller).
@@ -40,9 +38,7 @@ postgresql:
   enabled: true
   auth:
     username: &pgUser root
-    # MUST be overridden at install time, e.g.
-    #   --set postgresql.auth.password=$(openssl rand -hex 16)
-    # Shipping a known password is a usable default credential.
+    # Override at install, e.g. --set postgresql.auth.password=$(openssl rand -hex 16)
     password: &pgPass "CHANGE_ME_STRONG_PASSWORD"
   primary:
     persistence:
@@ -88,9 +84,8 @@ vllm:
   llmModelName: &llmModel "RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-quantized.w8a8"
   servingEngineSpec:
     enableEngine: true
-    # NOTE: the per-model `tag: "latest"` entries below are operator-supplied
-    # serving images — pin each to a specific vLLM release tag (or digest)
-    # before production use for reproducible deploys (see vlm, pinned to v0.11.2).
+    # Pin the per-model `tag: "latest"` entries below to specific releases before
+    # production (see vlm, pinned to v0.11.2).
     modelSpec:
       - name: "embedder"
         repository: "vllm/vllm-openai"

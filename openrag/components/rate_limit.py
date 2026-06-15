@@ -1,20 +1,11 @@
-"""Path-tiered request rate limiting.
+"""Per-identity request rate limiting, tiered by path.
 
-OpenRag exposed no rate limiting, leaving auth and inference endpoints open to
-brute-force and resource-exhaustion abuse. This middleware applies a moving
-window limit keyed on the authenticated user (falling back to the client IP for
-unauthenticated/bypass paths such as the OIDC login flow), with stricter tiers
-for the auth and inference surfaces.
+Keyed on the authenticated user, or the client IP for unauthenticated paths.
+Runs after AuthMiddleware (see api.py) so request.state.user is set. Limits are
+per-worker; use a Redis storage to share them across workers.
 
-It runs *after* AuthMiddleware so it can key on ``request.state.user`` — see the
-registration order in api.py. Limits are in-process (per worker); for a shared
-limit across workers point ``limits`` at a Redis storage instead.
-
-Configuration (env):
-  RATE_LIMIT_ENABLED   default "true"
-  RATE_LIMIT_DEFAULT   default "300/minute"   (all other paths)
-  RATE_LIMIT_AUTH      default "20/minute"    (/auth/*)
-  RATE_LIMIT_CHAT      default "60/minute"    (/v1/*)
+Env: RATE_LIMIT_ENABLED (true), RATE_LIMIT_DEFAULT (300/minute),
+RATE_LIMIT_AUTH (20/minute, /auth/*), RATE_LIMIT_CHAT (60/minute, /v1/*).
 """
 
 import os
@@ -65,8 +56,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _identity(request: Request) -> str:
-        # Prefer the authenticated user (set by AuthMiddleware as a dict); fall
-        # back to the peer IP for unauthenticated / bypassed paths.
+        # user is a dict set by AuthMiddleware; fall back to client IP.
         user = getattr(request.state, "user", None)
         user_id = user.get("id") if isinstance(user, dict) else None
         if user_id is not None:
@@ -82,8 +72,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limit, tier = self._limit_for(path)
         identity = self._identity(request)
 
-        # Namespace the window by tier so the strict auth/chat budgets don't
-        # share a counter with the generous default budget.
+        # Key by tier so each tier has its own budget.
         allowed = await self._limiter.hit(limit, tier, identity)
         if not allowed:
             stats = await self._limiter.get_window_stats(limit, tier, identity)

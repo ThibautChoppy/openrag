@@ -41,8 +41,7 @@ class OpenAICompletionRequest(BaseModel):
 
     model: str | None = Field(None, description="model name")
     prompt: str
-    # Bound n/best_of: each multiplies generation cost, so leaving them unbounded
-    # lets one request fan out into a resource-exhaustion amplifier.
+    # Bound n/best_of: each multiplies generation cost.
     best_of: int | None = Field(1, ge=1, le=8)
     echo: bool | None = Field(False)
     frequency_penalty: float | None = Field(0.0)

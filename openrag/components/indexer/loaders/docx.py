@@ -82,9 +82,7 @@ class DocxLoader(BaseLoader):
         return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
     def get_images_from_zip(self, input_file):
-        # Parser-bomb caps: bound how many embedded media entries we iterate and
-        # how large any single (decompressed) entry may be, so a crafted docx
-        # can't exhaust memory via thousands of parts or one huge image.
+        # Cap the number of media entries and the size of each (zip-bomb guard).
         max_entries, max_entry_bytes = 2000, 100 * 1024 * 1024
         loader_cfg = getattr(getattr(self, "config", None), "loader", None)
         if loader_cfg is not None:
@@ -107,8 +105,8 @@ class DocxLoader(BaseLoader):
                 )
                 image_files = image_files[:max_entries]
 
-            # Map original position (from filename) -> image. Using a dict avoids
-            # allocating a list sized by an attacker-controlled index.
+            # Map position (from filename) -> image; a dict avoids allocating a
+            # list sized by an attacker-controlled index.
             by_order: dict[int, Image.Image] = {}
 
             for image_file in image_files:
@@ -131,9 +129,8 @@ class DocxLoader(BaseLoader):
                     logger.warning(f"Skipping unsupported media file {image_file}: {e}")
                     continue
 
-                # order_num is the 1-based position parsed from the (untrusted)
-                # filename; a non-positive value would index images[pos-1] wrongly
-                # or raise. Skip such malformed entries.
+                # order_num (from the filename) is 1-based; skip bad values that
+                # would mis-index images[pos-1].
                 if order_num < 1:
                     logger.warning(f"Skipping media file with non-positive index: {image_file}")
                     continue
@@ -143,12 +140,9 @@ class DocxLoader(BaseLoader):
             if not by_order:
                 return []
 
-            # Reorder images by their original document position, preserving None
-            # gaps for skipped (unsupported) media so downstream caption alignment
-            # is unchanged. The position index comes from the filename, so guard
-            # against an attacker-controlled huge index by only materialising the
-            # positional array when the max index is within the entry cap;
-            # otherwise fall back to a compact ordered list.
+            # Order by position, keeping None gaps for skipped media (caption
+            # alignment relies on it). Only build the positional list when the max
+            # index is within the cap; otherwise return a compact ordered list.
             max_order = max(by_order)
             if max_order <= max_entries:
                 images = [None] * max_order

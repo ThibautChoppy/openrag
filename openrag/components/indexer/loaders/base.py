@@ -35,8 +35,7 @@ class BaseLoader(ABC):
     HTTP_IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((https?://[^)]+)\)")
     DATA_URI_IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((data:image/[^;]+;base64,[^)]+)\)")
     MIN_IMAGE_PIXELS = 784  # Qwen2.5-VL min_pixels threshold
-    # Cap remote image fetches so a malicious document can't point us at a
-    # huge body to exhaust memory; also bounds the data URI sent to the VLM.
+    # Cap remote image fetches to bound memory use.
     MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
     REMOTE_IMAGE_TIMEOUT = 10.0
 
@@ -92,15 +91,12 @@ class BaseLoader(ABC):
         return isinstance(data, str) and data.startswith("data:image/")
 
     async def _fetch_remote_image_as_data_uri(self, url: str) -> str | None:
-        """Fetch a remote image URL in-process with SSRF protection and return
-        it as a data URI, or None if it is unsafe / unreachable / not an image.
+        """Fetch a remote image URL with SSRF protection, return it as a data URI.
 
-        Captioning a document's ``![](http://...)`` reference by handing the raw
-        URL to the VLM turns the VLM (and us) into an SSRF gadget: a poisoned
-        document can probe internal services (e.g. the cloud metadata endpoint).
-        We therefore never forward the URL: we fetch it ourselves, rejecting any
-        host that resolves to a non-global address and refusing redirects (a
-        classic SSRF bypass), then pass only the resulting bytes to the VLM.
+        Returns None if the URL is unsafe, unreachable or not an image. We fetch
+        the image ourselves (rejecting non-global hosts and redirects) and pass
+        only the bytes to the VLM, so a poisoned document can't make the VLM hit
+        an internal URL.
         """
         if is_blocked_url_literal(url):
             logger.warning("Blocked non-global image URL for captioning", url=url)
@@ -112,8 +108,7 @@ class BaseLoader(ABC):
                 follow_redirects=False,
                 event_hooks={"request": [guard_request]},
             ) as client:
-                # Stream so the size cap is enforced as bytes arrive, rather than
-                # buffering an attacker-chosen huge body in full before rejecting.
+                # Stream so we stop once the size cap is hit.
                 async with client.stream("GET", url) as resp:
                     resp.raise_for_status()
                     content_type = resp.headers.get("content-type", "")
@@ -168,9 +163,7 @@ class BaseLoader(ABC):
                     image_url = f"data:image/png;base64,{img_b64}"
 
                 elif self._is_http_url(image_data):
-                    # Fetch remote images ourselves (with SSRF guards) and pass a
-                    # data URI to the VLM, rather than letting the VLM fetch an
-                    # attacker-controlled URL. See _fetch_remote_image_as_data_uri.
+                    # Fetch the image ourselves (SSRF-guarded) and send a data URI.
                     image_url = await self._fetch_remote_image_as_data_uri(image_data)
                     if not image_url:
                         return "<image_description>\n\nImage URL unavailable or blocked\n\n</image_description>"

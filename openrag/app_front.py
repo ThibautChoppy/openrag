@@ -27,11 +27,10 @@ _DEV_AUTH_SECRET = "default_secret_for_openrag_ui"
 
 
 def _ensure_chainlit_auth_secret() -> None:
-    """Make sure CHAINLIT_AUTH_SECRET is set before Chainlit signs sessions.
+    """Require CHAINLIT_AUTH_SECRET so UI session cookies can't be forged.
 
-    Falling back to a public constant lets anyone forge UI session cookies, so
-    we fail-fast when it is unset. The insecure default is only permitted with
-    the same explicit dev opt-in that disables backend auth (ALLOW_NO_AUTH).
+    Fail if it's unset; the built-in default is only allowed with ALLOW_NO_AUTH
+    (dev).
     """
     if CHAINLIT_AUTH_SECRET:
         return
@@ -279,12 +278,8 @@ async def _format_sources(metadata_sources, only_txt=False, api_key=None):
         filename = Path(s["filename"])
         file_url = s["file_url"]
         file_url = file_url.replace(INTERNAL_BASE_URL, external_url)  # put the correct base url
-        # Avoid leaking the credential in the URL (browser history, proxy logs,
-        # Referer headers). In OIDC mode the browser already sends the
-        # openrag_session cookie on same-origin file fetches, which the auth
-        # middleware accepts — so the token query param is unnecessary. In token
-        # mode there is no such cookie, so it remains the only way for the
-        # browser to authenticate the fetch.
+        # Don't put the token in the URL. In OIDC mode the browser sends the
+        # session cookie; in token mode the query param is the only option.
         if AUTH_MODE != "oidc":
             file_url = f"{file_url}?token={api_key}"
         page = s["page"]

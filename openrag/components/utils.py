@@ -111,10 +111,7 @@ def format_context(
 
     for i, doc in enumerate(docs):
         prefix = f"[Source {len(reduced_docs) + 1}]\n" if number_sources else ""
-        # Neutralize control tokens so a poisoned document cannot forge a
-        # [Source N] block, inject a [Sources: ...] citation tag, or fake the
-        # inter-source separator. The [Source N] prefix below is the only
-        # trusted marker.
+        # Neutralize control tokens so the document can't forge source markers.
         content = neutralize_prompt_control_tokens(doc.page_content)
         n_tokens = _length_function(content)
         if prefix:

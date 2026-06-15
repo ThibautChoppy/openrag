@@ -1,15 +1,8 @@
-"""Shared SSRF guards for outbound fetches of user/document-controlled URLs.
+"""SSRF guards for outbound fetches of URLs from documents or users.
 
-Two layers, mirroring the websearch content fetcher:
-
-1. ``is_blocked_url_literal`` — a cheap, no-DNS pre-check that rejects
-   non-HTTP(S) schemes and any *literal* IP that is not globally routable
-   (loopback, private/RFC1918, link-local, reserved, ...).
-2. ``guard_request`` — an ``httpx`` request hook that resolves the host and
-   rejects the connection if *any* resolved address is non-global. Runs for
-   the initial request and every redirect hop, so a public hostname that
-   resolves (or redirects) to an internal address is caught before the socket
-   is used.
+is_blocked_url_literal is a no-DNS pre-check (scheme + literal IP). guard_request
+is an httpx hook that resolves the host and rejects non-global addresses, on the
+first request and on each redirect.
 """
 
 import asyncio
@@ -24,11 +17,9 @@ logger = get_logger()
 
 
 def is_blocked_url_literal(url: str) -> bool:
-    """Block obviously-internal targets without a DNS lookup.
+    """Reject non-HTTP(S) schemes and non-global literal IPs (no DNS lookup).
 
-    Rejects non-HTTP(S) schemes and any literal IP that is not globally
-    routable. Hostnames are passed through here and validated against their
-    *resolved* IPs by :func:`guard_request`.
+    Hostnames pass here and are checked against their resolved IPs in guard_request.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -43,9 +34,7 @@ def is_blocked_url_literal(url: str) -> bool:
 
 
 async def guard_request(request: httpx.Request) -> None:
-    """``httpx`` request event hook: block requests whose host resolves to a
-    non-global IP. Runs for the initial request and every redirect hop.
-    """
+    """httpx hook: block requests whose host resolves to a non-global IP."""
     host = request.url.host
     if not host:
         raise httpx.RequestError("Blocked request with no host", request=request)

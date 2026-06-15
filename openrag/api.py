@@ -15,10 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
 
-# Bind the Ray dashboard to localhost by default; the dashboard / Jobs API is
-# unauthenticated (CVE-2023-48022 "ShadowRay") so it must never listen on a
-# routable interface. Operators that front it with an auth proxy can override
-# via RAY_DASHBOARD_HOST.
+# Bind the Ray dashboard to localhost; it's unauthenticated (CVE-2023-48022).
+# Override with RAY_DASHBOARD_HOST (e.g. behind an auth proxy).
 ray.init(dashboard_host=os.environ.get("RAY_DASHBOARD_HOST", "127.0.0.1"))
 
 # Apply noqa: E402 to ignore "module level import not at top of file" cause ray.init has to be called first
@@ -218,10 +216,8 @@ class TokenRedactingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Register middlewares (order matters - last added runs first, i.e. is the
-# outermost layer). RateLimitMiddleware is added first so it is the innermost
-# layer and runs *after* AuthMiddleware has populated request.state.user,
-# letting it key limits on the authenticated user (IP fallback otherwise).
+# Order matters (last added = outermost). RateLimitMiddleware is added first so
+# it runs after AuthMiddleware sets request.state.user and can key on the user.
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware, get_vectordb=get_vectordb)
 app.add_middleware(TokenRedactingMiddleware)

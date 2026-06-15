@@ -495,12 +495,10 @@ class PartitionFileManager:
     def create_partition(self, partition: str, user_id: int, max_owned: int | None = None) -> str:
         """Create a partition owned by ``user_id``.
 
-        When ``max_owned`` is a non-negative int, the owner-count check and the
-        insert happen in the same session so concurrent creates can't race past
-        the cap (the Vectordb actor serializes calls, making this atomic). Pass
-        ``None`` (or a negative value) to skip the cap (admins / unlimited).
-
-        Returns one of ``"created"``, ``"exists"``, ``"limit_exceeded"``.
+        If ``max_owned`` is >= 0, the owner-count check and insert run in the same
+        session (atomic, since the Vectordb actor serializes calls). None or a
+        negative value skips the cap. Returns "created", "exists" or
+        "limit_exceeded".
         """
         with self.Session() as s:
             if s.query(Partition).filter(Partition.partition == partition).first():

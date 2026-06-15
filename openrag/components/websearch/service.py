@@ -23,8 +23,7 @@ class WebSearchService:
         try:
             results = await self.provider.search(query)
             if not results:
-                # Don't log the query text (user PII); the empty-result signal
-                # is enough for diagnostics.
+                # Don't log the query text (PII).
                 logger.warning("Web search returned zero results")
                 return results
 
