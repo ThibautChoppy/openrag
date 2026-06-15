@@ -171,11 +171,13 @@ class TestTokenModeLegacy:
 
 
 class TestTokenModeDevBypass:
-    """AUTH_MODE=token, AUTH_TOKEN unset → all requests resolve to user id=1."""
+    """AUTH_MODE=token, AUTH_TOKEN unset → admin bypass only when explicitly
+    opted into via ALLOW_NO_AUTH=true; otherwise it must NOT fail open."""
 
-    def test_no_token_resolves_user_1(self, monkeypatch):
+    def test_no_token_resolves_user_1_when_allowed(self, monkeypatch):
         monkeypatch.setenv("AUTH_MODE", "token")
         monkeypatch.delenv("AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("ALLOW_NO_AUTH", "true")
         vdb = _make_vectordb_mock(user={"id": 1, "display_name": "Admin"})
         app = _build_app(vdb)
         with TestClient(app) as client:
@@ -183,6 +185,18 @@ class TestTokenModeDevBypass:
         assert r.status_code == 200
         assert r.json() == {"user": 1}
         vdb.get_user.remote.assert_awaited_with(1)
+
+    def test_no_token_does_not_fail_open_without_flag(self, monkeypatch):
+        monkeypatch.setenv("AUTH_MODE", "token")
+        monkeypatch.delenv("AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("ALLOW_NO_AUTH", raising=False)
+        vdb = _make_vectordb_mock(user={"id": 1, "display_name": "Admin"})
+        app = _build_app(vdb)
+        with TestClient(app) as client:
+            r = client.get("/v1/chat/completions")
+        # No token + no opt-in → not authenticated, never resolves to admin.
+        assert r.status_code in (401, 403)
+        vdb.get_user.remote.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
