@@ -29,15 +29,30 @@ class TestExtractLlmOverrides:
         assert base_url == "http://default-llm:8000/v1"
         assert headers["Authorization"] == "Bearer default-key"
 
-    def test_override_all_fields(self, llm):
+    def test_model_override_applied(self, llm):
         request = {
             "model": "openrag-my-partition",
             "messages": [{"role": "user", "content": "hello"}],
             "stream": False,
+            "metadata": {"llm_override": {"model": "custom-model"}},
+        }
+        payload, base_url, headers = llm._extract_llm_overrides(request)
+
+        assert payload["model"] == "custom-model"
+        # Endpoint and credentials always come from server config.
+        assert base_url == "http://default-llm:8000/v1"
+        assert headers["Authorization"] == "Bearer default-key"
+
+    def test_client_base_url_and_api_key_override_ignored(self, llm):
+        # SSRF / key-exfiltration guard: a client-supplied base_url/api_key
+        # must never be honored.
+        request = {
+            "model": "openrag-my-partition",
+            "stream": False,
             "metadata": {
                 "llm_override": {
-                    "base_url": "http://custom-llm:9000/v1",
-                    "api_key": "custom-key",
+                    "base_url": "http://169.254.169.254/latest/meta-data",
+                    "api_key": "attacker-key",
                     "model": "custom-model",
                 }
             },
@@ -45,18 +60,8 @@ class TestExtractLlmOverrides:
         payload, base_url, headers = llm._extract_llm_overrides(request)
 
         assert payload["model"] == "custom-model"
-        assert base_url == "http://custom-llm:9000/v1"
-        assert headers["Authorization"] == "Bearer custom-key"
-
-    def test_trailing_slash_stripped_from_base_url(self, llm):
-        request = {
-            "model": "openrag-my-partition",
-            "stream": False,
-            "metadata": {"llm_override": {"base_url": "http://custom:8000/v1///"}},
-        }
-        _, base_url, _ = llm._extract_llm_overrides(request)
-
-        assert base_url == "http://custom:8000/v1"
+        assert base_url == "http://default-llm:8000/v1"
+        assert headers["Authorization"] == "Bearer default-key"
 
     def test_request_params_forwarded_to_payload(self, llm):
         request = {
