@@ -104,6 +104,9 @@ services:
       - DEFAULT_FILE_QUOTA=10
       - AUTH_TOKEN=${AUTH_TOKEN:-test-admin-token}
       - SUPER_ADMIN_MODE=${SUPER_ADMIN_MODE:-true}
+      # The API test suite issues bursts of requests; disable rate limiting so
+      # it doesn't trip the limiter (the limiter is unit-tested separately).
+      - RATE_LIMIT_ENABLED=false
     ports:
       - "8080:8080"
     volumes:

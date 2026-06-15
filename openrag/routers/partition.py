@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 from urllib.parse import quote
 
@@ -228,13 +229,25 @@ Returns 409 Conflict if partition already exists.
 )
 async def create_partition(request: Request, partition: str, vectordb=Depends(get_vectordb)):
     assert_valid_partition_name(partition)
-    if await vectordb.partition_exists.remote(partition):
+    user = request.state.user
+    user_id = user["id"]
+
+    # Cap partitions per non-admin user. The count+create is done atomically in
+    # the Vectordb actor (serialized), so concurrent requests can't race past it.
+    # max_owned=None (admin) or < 0 disables the cap.
+    max_owned = None if user.get("is_admin", False) else int(os.environ.get("MAX_PARTITIONS_PER_USER", "100"))
+
+    result = await vectordb.create_partition.remote(partition=partition, user_id=user_id, max_owned=max_owned)
+    if result == "exists":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Partition '{partition}' already exists.",
         )
-    user_id = request.state.user["id"]
-    await vectordb.create_partition.remote(partition=partition, user_id=user_id)
+    if result == "limit_exceeded":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Partition limit reached ({max_owned}). Contact an administrator.",
+        )
     return Response(status_code=status.HTTP_201_CREATED)
 
 

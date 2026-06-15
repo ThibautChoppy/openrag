@@ -16,6 +16,7 @@ in ``token`` mode.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -520,6 +521,24 @@ async def callback(request: Request, code: str | None = None, state: str | None 
 # ---------------------------------------------------------------------------
 
 
+# Seen logout-token jti -> exp, so a token is only consumed once. Per-worker;
+# logout is idempotent so this is just defence-in-depth.
+_seen_logout_jti: dict[str, int] = {}
+
+
+def _logout_jti_is_replay(jti: str, exp: int) -> bool:
+    """Record a logout-token jti and report whether it was already seen."""
+    now = int(time.time())
+    # Prune expired entries to bound memory.
+    for old_jti, old_exp in list(_seen_logout_jti.items()):
+        if old_exp < now:
+            del _seen_logout_jti[old_jti]
+    if jti in _seen_logout_jti:
+        return True
+    _seen_logout_jti[jti] = exp
+    return False
+
+
 @router.post("/auth/backchannel-logout", include_in_schema=False)
 async def backchannel_logout(logout_token: str = Form(...)):
     """IdP-initiated logout per OIDC Back-Channel Logout spec.
@@ -547,6 +566,15 @@ async def backchannel_logout(logout_token: str = Form(...)):
             headers={"Cache-Control": "no-store"},
         )
 
+    # Reject replays: a given logout token (jti) must only be processed once.
+    if claims.jti and _logout_jti_is_replay(claims.jti, claims.exp):
+        logger.warning(f"Replayed back-channel logout token ignored — jti={claims.jti!r}")
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "invalid_request", "error_description": "logout_token replayed"},
+            headers={"Cache-Control": "no-store"},
+        )
+
     if claims.sid:
         vdb = get_vectordb()
         count = await vdb.revoke_oidc_sessions_by_sid.remote(claims.sid)
@@ -570,9 +598,31 @@ async def backchannel_logout(logout_token: str = Form(...)):
 # ---------------------------------------------------------------------------
 
 
+def _is_csrf_safe_navigation(request: Request) -> bool:
+    """Block cross-site CSRF logout while allowing top-level navigation.
+
+    Logout stays a GET (OIDC redirects to the IdP), so instead of requiring POST
+    we use Fetch Metadata: a cross-site non-navigation request (forged <img> etc.)
+    is blocked; navigations and same-origin requests pass. Older browsers that
+    omit these headers are allowed.
+    """
+    site = request.headers.get("sec-fetch-site")
+    mode = request.headers.get("sec-fetch-mode")
+    if site == "cross-site" and mode not in (None, "navigate"):
+        return False
+    return True
+
+
 @router.get("/auth/logout", include_in_schema=False)
 async def logout(request: Request):
     _require_oidc_mode()
+
+    if not _is_csrf_safe_navigation(request):
+        logger.warning("Blocked cross-site non-navigation request to /auth/logout (CSRF)")
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "Cross-site logout requests are not allowed"},
+        )
 
     vdb = get_vectordb()
     client: OIDCClient = get_oidc_client()

@@ -15,7 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
 
-ray.init(dashboard_host="0.0.0.0")
+# Bind the Ray dashboard to localhost; it's unauthenticated (CVE-2023-48022).
+# Override with RAY_DASHBOARD_HOST (e.g. behind an auth proxy).
+ray.init(dashboard_host=os.environ.get("RAY_DASHBOARD_HOST", "127.0.0.1"))
 
 # Apply noqa: E402 to ignore "module level import not at top of file" cause ray.init has to be called first
 
@@ -23,6 +25,7 @@ ray.init(dashboard_host="0.0.0.0")
 
 
 from components.auth.middleware import AuthMiddleware
+from components.rate_limit import RateLimitMiddleware
 from routers.actors import router as actors_router
 from routers.auth import router as auth_router
 from routers.download import router as download_router
@@ -213,7 +216,9 @@ class TokenRedactingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Register middlewares (order matters - last added runs first)
+# Order matters (last added = outermost). RateLimitMiddleware is added first so
+# it runs after AuthMiddleware sets request.state.user and can key on the user.
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware, get_vectordb=get_vectordb)
 app.add_middleware(TokenRedactingMiddleware)
 app.add_middleware(MonitoringMiddleware)

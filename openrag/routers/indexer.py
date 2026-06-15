@@ -22,6 +22,7 @@ from utils.logger import get_logger
 
 from .utils import (
     check_user_file_quota,
+    current_user,
     current_user_partitions,
     ensure_partition_role,
     human_readable_size,
@@ -147,10 +148,11 @@ async def add_file(
     try:
         file_path = await save_file_to_disk(file, save_dir, with_random_prefix=True)
     except Exception as e:
+        # Log details server-side; return a generic message (no paths/internals).
         logger.exception("Failed to save file to disk.", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Failed to save uploaded file.",
         )
 
     metadata.update(
@@ -483,6 +485,7 @@ async def get_task_error(
     task_id: str,
     task_state_manager=Depends(get_task_state_manager),
     task_details=Depends(require_task_owner),
+    user=Depends(current_user),
 ):
     error = await task_state_manager.get_error.remote(task_id)
     if error is None:
@@ -490,7 +493,10 @@ async def get_task_error(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No error found for task '{task_id}'.",
         )
-    return {"task_id": task_id, "traceback": error.splitlines()}
+    # Only admins get the raw traceback (it exposes paths/internals).
+    if user and user.get("is_admin", False):
+        return {"task_id": task_id, "traceback": error.splitlines()}
+    return {"task_id": task_id, "traceback": ["Task failed. Contact an administrator for details."]}
 
 
 @router.get(

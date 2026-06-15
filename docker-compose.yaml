@@ -5,7 +5,7 @@ include:
   - ${TRANSCRIBER_COMPOSE:-extern/dummy.yaml}
 
 x-openrag: &openrag_template
-  image: linagoraai/openrag:latest
+  image: linagoraai/openrag:1.1.11
   build:
     context: .
     dockerfile: Dockerfile
@@ -22,9 +22,10 @@ x-openrag: &openrag_template
     - ${DATA_VOLUME:-./data}:/app/data
     - ./i8n:/app/openrag/.chainlit/translations
     - ${MODEL_WEIGHTS_VOLUME:-~/.cache/huggingface}:/app/model_weights # Model weights for RAG
-    - ./openrag:/app/openrag # For dev mode
+    # Dev only: mounts source over the image. Keep off in production.
+    # - ./openrag:/app/openrag # For dev mode
     - /$SHARED_ENV:/ray_mount/.env # Shared environment variables
-    - ./logs:/app/logs # For dev mode
+    - ./logs:/app/logs
   ports:
     - ${APP_PORT:-8080}:${APP_iPORT:-8080}
     # Bind the Ray dashboard to localhost only: it has no authentication and
@@ -75,7 +76,7 @@ x-vllm: &vllm_template
 services:
   # OpenRAG Indexer UI
   indexer-ui:
-    image: linagoraai/indexer-ui:latest
+    image: linagoraai/indexer-ui:1.1.11
     build:
       context: ./extern/indexer-ui
       dockerfile: Dockerfile
@@ -135,7 +136,7 @@ services:
   rdb:
     image: postgres:15
     environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-root_password}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env}
       - POSTGRES_USER=${POSTGRES_USER:-root}
     volumes:
       - ${DB_VOLUME:-./db}:/var/lib/postgresql/data

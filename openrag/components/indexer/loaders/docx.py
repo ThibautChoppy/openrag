@@ -82,6 +82,12 @@ class DocxLoader(BaseLoader):
         return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
     def get_images_from_zip(self, input_file):
+        # Cap the number of media entries and the size of each (zip-bomb guard).
+        max_entries, max_entry_bytes = 2000, 100 * 1024 * 1024
+        loader_cfg = getattr(getattr(self, "config", None), "loader", None)
+        if loader_cfg is not None:
+            max_entries = int(loader_cfg.get("max_archive_entries", max_entries))
+            max_entry_bytes = int(loader_cfg.get("max_archive_entry_bytes", max_entry_bytes))
         try:
             docx = zipfile.ZipFile(input_file, "r")
         except zipfile.BadZipFile:
@@ -93,13 +99,26 @@ class DocxLoader(BaseLoader):
             image_files = [f for f in file_names if f.startswith("word/media/")]
             if not image_files:
                 return []
+            if len(image_files) > max_entries:
+                logger.warning(
+                    "Capping embedded media extraction", path=str(input_file), found=len(image_files), cap=max_entries
+                )
+                image_files = image_files[:max_entries]
 
-            images_not_in_order, order = [], []
-
-            # the images got from the original file is not in the right order
-            # but the target_ref contains the position of the image in the document
+            # Map position (from filename) -> image; a dict avoids allocating a
+            # list sized by an attacker-controlled index.
+            by_order: dict[int, Image.Image] = {}
 
             for image_file in image_files:
+                info = docx.getinfo(image_file)
+                if info.file_size > max_entry_bytes:
+                    logger.warning(
+                        "Skipping oversized embedded media entry",
+                        entry=image_file,
+                        size=info.file_size,
+                        cap=max_entry_bytes,
+                    )
+                    continue
                 image_data = docx.read(image_file)
                 image_extension = image_file.split(".")[-1].lower()
                 try:
@@ -110,15 +129,24 @@ class DocxLoader(BaseLoader):
                     logger.warning(f"Skipping unsupported media file {image_file}: {e}")
                     continue
 
-                images_not_in_order.append(image)
-                order.append(order_num)
+                # order_num (from the filename) is 1-based; skip bad values that
+                # would mis-index images[pos-1].
+                if order_num < 1:
+                    logger.warning(f"Skipping media file with non-positive index: {image_file}")
+                    continue
 
-            if not images_not_in_order:
+                by_order[order_num] = image
+
+            if not by_order:
                 return []
 
-            # Reorder images by their original position in the document
-            max_order = max(order)
-            images = [None] * max_order
-            for i, pos in enumerate(order):
-                images[pos - 1] = images_not_in_order[i]
-            return images
+            # Order by position, keeping None gaps for skipped media (caption
+            # alignment relies on it). Only build the positional list when the max
+            # index is within the cap; otherwise return a compact ordered list.
+            max_order = max(by_order)
+            if max_order <= max_entries:
+                images = [None] * max_order
+                for pos, img in by_order.items():
+                    images[pos - 1] = img
+                return images
+            return [by_order[k] for k in sorted(by_order)]

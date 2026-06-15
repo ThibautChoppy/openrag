@@ -323,8 +323,9 @@ async def openai_chat_completion(
         truncate(str(request.messages)),
     )
 
+    # Bound the caller's input size in both RAG and direct-LLM modes.
+    check_tokens_limit(request, log)
     if is_direct_llm_model(request):
-        check_tokens_limit(request, log)
         partitions = None
     else:
         partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
@@ -418,8 +419,8 @@ async def openai_completion(
             detail="Streaming is not supported for this endpoint",
         )
 
+    check_tokens_limit(request, log)
     if is_direct_llm_model(request):
-        check_tokens_limit(request, log)
         partitions = None
     else:
         partitions = await get_partition_name(model_name, user_partitions, is_admin=user["is_admin"])
