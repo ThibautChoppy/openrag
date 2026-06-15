@@ -1,4 +1,5 @@
 import asyncio
+import socket
 
 import httpx
 import pytest
@@ -77,6 +78,38 @@ class TestFetchSingleURL:
             text = await fetcher._fetch_single(client, url)
 
         assert text is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("url", ["ftp://example.com/x", "file:///etc/passwd", "gopher://example.com"])
+    async def test_skips_non_http_schemes(self, fetcher, url):
+        async def mock_handler(request):
+            return httpx.Response(200, text="<html><body>x</body></html>")
+
+        transport = httpx.MockTransport(mock_handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            text = await fetcher._fetch_single(client, url)
+
+        assert text is None
+
+    @pytest.mark.asyncio
+    async def test_guard_request_blocks_host_resolving_to_private_ip(self, fetcher, monkeypatch):
+        # A public-looking hostname that resolves to an internal IP must be blocked.
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))]
+
+        monkeypatch.setattr("components.websearch.content_fetcher.socket.getaddrinfo", fake_getaddrinfo)
+        req = httpx.Request("GET", "http://internal.example.com/")
+        with pytest.raises(httpx.RequestError):
+            await fetcher._guard_request(req)
+
+    @pytest.mark.asyncio
+    async def test_guard_request_allows_global_ip(self, fetcher, monkeypatch):
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr("components.websearch.content_fetcher.socket.getaddrinfo", fake_getaddrinfo)
+        req = httpx.Request("GET", "http://example.com/")
+        await fetcher._guard_request(req)  # must not raise
 
     @pytest.mark.asyncio
     async def test_strips_boilerplate_html(self, fetcher):
