@@ -56,6 +56,8 @@ dependencies = [
     "itsdangerous>=2.2",
     "cryptography>=42",
     "slowapi>=0.1.9",
+    "starlette>=0.47.2,<0.48",
+    "fastapi>=0.116.1,<0.117",
 ]
 
 [dependency-groups]
