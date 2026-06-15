@@ -26,6 +26,7 @@ from .utils import (
     current_user_partitions,
     ensure_partition_role,
     human_readable_size,
+    is_file_id_valid,
     require_partition_editor,
     require_task_owner,
     validate_file_format,
@@ -41,7 +42,6 @@ config = load_config()
 DATA_DIR = config.paths.data_dir
 VECTORDB_TIMEOUT = config.ray.indexer.vectordb_timeout
 
-FORBIDDEN_CHARS_IN_FILE_ID = set("/")  # set('"<>#%{}|\\^`[]')
 LOG_FILE = Path(config.paths.log_dir or "logs") / "app.json"
 
 # supported file formats or mimetypes
@@ -407,6 +407,11 @@ async def copy_file_between_partitions(
     user_partitions=Depends(current_user_partitions),
     _quota_check=Depends(check_user_file_quota),
 ):
+    if not is_file_id_valid(source_file_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source file ID may only contain letters, digits, '.', '_', ':' and '-'.",
+        )
     # Make sure user has access to destination partition
     await ensure_partition_role(
         partition=source_partition,
