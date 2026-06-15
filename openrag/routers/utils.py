@@ -95,15 +95,24 @@ async def ensure_partition_role(
     membership = next((p for p in user_partitions if p["partition"] == partition), None)
 
     if not membership:
-        # Partition exists but no membership
         partition_exists = await vectordb.partition_exists.remote(partition)
         if partition_exists:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access to partition '{partition}' forbidden",
             )
-        else:
+        # Partition does not exist. The only legitimate reason a non-member
+        # may act on a missing partition is the create-on-write path (file
+        # upload), which is `editor` and which later creates the partition
+        # with the uploader as owner. Reading or owning a partition that does
+        # not exist must NOT silently succeed — that previously let a
+        # non-member pass an owner/viewer check by naming an unknown partition.
+        if required_role == "editor":
             return True
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Partition '{partition}' not found",
+        )
 
     user_role = membership.get("role")
     if ROLE_HIERARCHY[user_role] < ROLE_HIERARCHY[required_role]:
