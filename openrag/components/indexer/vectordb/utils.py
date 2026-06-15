@@ -535,11 +535,18 @@ class PartitionFileManager:
         with self.Session() as s:
             return s.query(PartitionMembership).filter_by(user_id=user_id, partition_name=partition).first() is not None
 
+    # Fields a caller may set via update_user. Excludes identity/privilege and
+    # security-sensitive columns (token, file_count, id, created_at) so they can
+    # never be overwritten through the user-update payload (mass assignment).
+    _UPDATABLE_USER_FIELDS = frozenset({"display_name", "external_user_id", "email", "is_admin", "file_quota"})
+
     def update_user(self, user_id: int, body: UserUpdate) -> dict:
-        """Update user's profile fields. Only provided (non-None) fields are updated."""
+        """Update user's profile fields. Only whitelisted, provided fields are updated."""
         with self.Session() as s:
             user = s.query(User).filter(User.id == user_id).first()
             for field, value in body.model_dump(exclude_unset=True).items():
+                if field not in self._UPDATABLE_USER_FIELDS:
+                    continue
                 setattr(user, field, value)
 
             s.commit()

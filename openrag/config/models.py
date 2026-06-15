@@ -484,7 +484,9 @@ class _BaseWebSearchConfig(ConfigMixin):
     fetch_max_results: int = 3
     fetch_timeout: float = 1.0
     fetch_max_tokens: int = 500
-    fetch_verify_ssl: bool = False
+    # Verify TLS certificates on web-page fetches by default; disabling this
+    # exposes fetched content (which feeds the LLM) to MITM tampering.
+    fetch_verify_ssl: bool = True
 
 
 class StaanWebSearchConfig(_BaseWebSearchConfig):
