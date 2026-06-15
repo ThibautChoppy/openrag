@@ -17,6 +17,8 @@ spec:
         app.kubernetes.io/name: openrag
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      securityContext:
+        {{- toYaml .Values.openrag.podSecurityContext | nindent 8 }}
       initContainers:
         - name: init-venv
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
@@ -29,21 +31,38 @@ spec:
                 sleep 3
               done
               echo "Venv is ready."
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-env
           volumeMounts:
             - name: venv
               mountPath: /app/.venv
       containers:
         - name: openrag
           image: "{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
+          securityContext:
+            {{- toYaml .Values.openrag.containerSecurityContext | nindent 12 }}
           ports:
             - containerPort: {{ .Values.openrag.service.port }}
           resources:
             {{- toYaml .Values.openrag.resources | nindent 12 }}
+          {{- if .Values.openrag.probes.startup }}
+          startupProbe:
+            {{- toYaml .Values.openrag.probes.startup | nindent 12 }}
+          {{- end }}
+          {{- if .Values.openrag.probes.readiness }}
+          readinessProbe:
+            {{- toYaml .Values.openrag.probes.readiness | nindent 12 }}
+          {{- end }}
+          {{- if .Values.openrag.probes.liveness }}
+          livenessProbe:
+            {{- toYaml .Values.openrag.probes.liveness | nindent 12 }}
+          {{- end }}
           envFrom:
             - configMapRef:
-                name: rag-env
+                name: {{ .Release.Name }}-env
             - secretRef:
-                name: rag-env-secrets
+                name: {{ include "openrag-stack.secretName" . }}
           volumeMounts:
             - name: model-weights
               mountPath: /app/model_weights
@@ -53,19 +72,23 @@ spec:
               mountPath: /app/logs
             - name: venv
               mountPath: /app/.venv
+            - name: egg-info
+              mountPath: /app/openrag.egg-info
       volumes:
         - name: model-weights
           persistentVolumeClaim:
-            claimName: rag-model-weights
+            claimName: {{ .Release.Name }}-model-weights
         - name: data
           persistentVolumeClaim:
-            claimName: rag-data
+            claimName: {{ .Release.Name }}-data
         - name: logs
           persistentVolumeClaim:
-            claimName: rag-logs
+            claimName: {{ .Release.Name }}-logs
         - name: venv
           persistentVolumeClaim:
-            claimName: rag-venv
+            claimName: {{ .Release.Name }}-venv
+        - name: egg-info
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

@@ -1,3 +1,5 @@
+enabled: true
+
 # === Network isolation ===
 # Default-deny ingress; allow only same-namespace traffic and the public HTTP
 # ports below. Isolates the Ray dashboard, Postgres, Milvus, etc.
@@ -11,8 +13,9 @@ networkPolicy:
 # === Global shared persistence ===
 persistence:
   enabled: true
-  storageClass: &storageClass longhorn
-  accessMode: ReadWriteMany
+  storageClass: &storageClass ""  # empty = use cluster default StorageClass
+  annotations: {}
+  accessMode: ReadWriteOnce
   volumes:
     modelWeights: { size: 50Gi }
     data: { size: 20Gi }
@@ -20,18 +23,33 @@ persistence:
     logs: { size: 1Gi }
     venv: { size: 10Gi }
 
+# === KubeRay operator (sub-chart) ===
+kuberay:
+  enabled: true
+
 ray:
+  enabled: true
   workers:
     count: 1
     replicas: 1
     minReplicas: 1
     maxReplicas: 1
-  nodeSelector:
-    gpu-role: serving
+  serviceAccountName: ""
+  podSecurityContext: {}
+  nodeSelector: {}
+  resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
     repository: ghcr.io/linagora/openrag-ray
-    # Pin to a release tag (ideally a digest) for reproducible deploys.
-    tag: "1.1.11"
+    tag: "v1.1.11"
+  resources:
+    head:
+      requests:
+        cpu: "4"
+        memory: "8Gi"
+    worker:
+      requests:
+        cpu: "4"
+        memory: "8Gi"
 
 # === PostgreSQL (bitnami) ===
 postgresql:
@@ -76,12 +94,22 @@ milvus:
       type: ClusterIP
       port: 19530
 
-# === vLLM (embedder) ===
+# === vLLM (embedder + whisper + llm + vlm) ===
 vllm:
+  enabled: true
   embedderModelName: &embedderModel "Qwen/Qwen3-Embedding-0.6B"
   vlmModelName: &vlmModel "Qwen/Qwen2.5-VL-7B-Instruct"
   whisperModelName: &whisperModel "openai/whisper-large-v3-turbo"
   llmModelName: &llmModel "RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-quantized.w8a8"
+
+  # Single source for the HF_TOKEN secret name passed to all four model specs.
+  # YAML anchor: editing this value propagates to all four hf_token.secretName entries below.
+  # Must match the chart env secret name ({{ .Release.Name }}-env-secrets by default).
+  # values.yaml is not templated, so set this manually when your release is not named "rag":
+  #   --set "vllm.servingEngineSpec.modelSpec[0].hf_token.secretName=<release>-env-secrets"
+  #   (repeat for indices 1, 2, 3 — see NOTES after install for the exact commands)
+  hfTokenSecretName: &vllmHfTokenSecretName "rag-env-secrets"
+
   servingEngineSpec:
     enableEngine: true
     # Pin the per-model `tag: "latest"` entries below to specific releases before
@@ -98,16 +126,12 @@ vllm:
         limitCPU: 4
         limitMemory: "16Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           gpuMemoryUtilization: 0.3
           extraArgs: ["--trust-remote-code", "--task", "embed"]
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["serving"]
+        nodeSelectorTerms: []
 
       - name: "whisper"
         repository: "ghcr.io/linagora/vllm-whisper"
@@ -120,16 +144,12 @@ vllm:
         limitCPU: 4
         limitMemory: "16Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           gpuMemoryUtilization: 0.5
           extraArgs: ["--trust-remote-code", "--async-scheduling"]
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["serving"]
+        nodeSelectorTerms: []
 
       - name: "llm"
         repository: "vllm/vllm-openai"
@@ -142,7 +162,7 @@ vllm:
         limitCPU: 8
         limitMemory: "32Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           v1: 1
@@ -156,12 +176,9 @@ vllm:
             requestCPU: 8
             requestMemory: "32Gi"
             requestGPU: 2
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["llm"]
+        nodeSelectorTerms: []
         pvcStorage: "50Gi"
+
       - name: "vlm"
         repository: "vllm/vllm-openai"
         tag: "v0.11.2"
@@ -173,7 +190,7 @@ vllm:
         limitCPU: 8
         limitMemory: "32Gi"
         hf_token:
-          secretName: rag-env-secrets
+          secretName: *vllmHfTokenSecretName
           secretKey: HF_TOKEN
         vllmConfig:
           v1: 1
@@ -182,25 +199,24 @@ vllm:
           maxModelLen: 8192
           extraArgs: ["--trust-remote-code"]
         shmSize: "20Gi"
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: gpu-role
-                operator: In
-                values: ["vlm"]
+        nodeSelectorTerms: []
   routerSpec:
     enableRouter: false
 
 # === Infinity reranker ===
 reranker:
+  # Set to false to skip deploying the reranker and use an external one instead.
+  # Configure externalUrl to point to the external reranker endpoint.
+  enabled: true
+  # URL of an external reranker (vLLM or any OpenAI-compatible reranker).
+  # When set, this overrides RERANKER_BASE_URL and no local reranker is deployed.
+  externalUrl: ""
   rerankerModelName: &rerankerModel "Alibaba-NLP/gte-multilingual-reranker-base"
   servicePort: &rerankerPort 7997
   image:
     repository: michaelf34/infinity
-    # Operator-supplied serving image: pin to a specific infinity release tag
-    # (or digest) before production use rather than tracking latest.
-    tag: latest
-  nodeSelector:
-    gpu-role: serving
+    tag: "0.0.75"
+  nodeSelector: {}
   model:
     id: Alibaba-NLP/gte-multilingual-reranker-base
   command:
@@ -210,7 +226,7 @@ reranker:
     - --port
     - *rerankerPort
   replicas: 1
-  runtimeClassName: nvidia
+  runtimeClassName: ""
   service:
     type: ClusterIP
     port: *rerankerPort
@@ -221,35 +237,48 @@ reranker:
     limits:
       cpu: "4"
       memory: "16Gi"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # model cache writes to /app/.cache
 
 indexerUi:
   enabled: true
 
   image: "linagoraai/indexer-ui:1.1.11"
   imagePullPolicy: IfNotPresent
-
   replicaCount: 1
-
   env:
     API_BASE_URL: "http://localhost:8080"
     INCLUDE_CREDENTIALS: "false"
-
   service:
     type: ClusterIP
     port: 3000
     targetPort: 3000
-
   ingress:
     enabled: false
-
   resources: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # Next.js writes to /app/config.json and /tmp at runtime
 
 # === OpenRAG main app ===
 openrag:
   image:
     repository: linagoraai/openrag
-    # Pin to a release tag (ideally a digest) for reproducible deploys.
-    tag: "1.1.11"
+    tag: "v1.1.11"
   service:
     type: ClusterIP
     port: 8080
@@ -261,27 +290,107 @@ openrag:
       cpu: "4"
       memory: "16Gi"
   replicas: 1
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: false  # app writes to /app/.venv and /tmp
+  # Probe configuration. Override with exec probes when ENABLE_RAY_SERVE=true,
+  # since the Ray Serve HTTP proxy runs on the Ray head (not on this pod).
+  probes:
+    startup:
+      httpGet:
+        path: /health_check
+        port: 8080
+      failureThreshold: 30
+      periodSeconds: 10
+    readiness:
+      httpGet:
+        path: /health_check
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3
+    liveness:
+      httpGet:
+        path: /health_check
+        port: 8080
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 3
 
 ingress:
   enabled: true
-  className: "nginx"
+  className: ""
   host: ""
+  annotations: {}
+    # nginx.ingress.kubernetes.io/rewrite-target: /$1
+    # nginx.ingress.kubernetes.io/use-regex: "true"
+    # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
 
   paths:
     openrag:
       enabled: true
 
+# === Outbound proxy ===
+# Set enabled: true when the cluster has no direct internet access.
+# Both uppercase and lowercase forms are injected (HTTP_PROXY / http_proxy) for broad tool compatibility.
+# no_proxy excludes cluster-internal traffic from being routed through the proxy.
+proxy:
+  enabled: false
+  url: "http://192.168.100.100:80"
+  noProxy: "localhost,127.0.0.1,.cluster.local,.svc,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
 # === Shared env (config + secrets) ===
 env:
+  # Name of an existing K8s Secret to use as-is.
+  # When set, the chart creates no Secret/ExternalSecret/VaultStaticSecret resource.
+  existingSecret: ""
+
+  # Secrets provider — ignored when existingSecret is set.
+  # type: values (default) | externalSecret | vaultStaticSecret
+  secretsProvider:
+    type: values
+
+    # Option A: External Secrets Operator
+    externalSecret:
+      refreshInterval: "1h"
+      secretStore:
+        name: "vault-backend"
+        kind: "ClusterSecretStore"
+      # Option 1: fetch all keys from a path (recommended)
+      dataFrom: []
+      # - extract:
+      #     key: "openrag/secrets"
+      # Option 2: map individual keys
+      data: []
+      # - secretKey: API_KEY
+      #   remoteRef:
+      #     key: "openrag/secrets"
+      #     property: "api_key"
+
+    # Option B: Vault Secrets Operator
+    vaultStaticSecret:
+      vaultAuthRef: "openrag-vault-auth"
+      mount: "kv"
+      type: "kv-v2"
+      path: "openrag/secrets"
+      refreshAfter: "30s"
+      hmacSecretData: true
+
   config:
     # LLM
     BASE_URL: "http://{{ .Release.Name }}-llm-engine-service/v1/"
-    MODEL: *llmModel
+    MODEL: '{{ .Values.vllm.llmModelName }}'
     LLM_SEMAPHORE: "50"
 
     # VLM
     VLM_BASE_URL: "http://{{ .Release.Name }}-vlm-engine-service/v1/"
-    VLM_MODEL: *vlmModel
+    VLM_MODEL: '{{ .Values.vllm.vlmModelName }}'
     VLM_SEMAPHORE: "50"
 
     # App
@@ -293,7 +402,7 @@ env:
     WITH_CHAINLIT_UI: "false"
     SAVE_UPLOADED_FILES: "false"
     API_NUM_WORKERS: "8"
-    INDEXERUI_URL: "http://indexer-ui:3042"
+    INDEXERUI_URL: "http://{{ .Release.Name }}-indexer-ui:{{ .Values.indexerUi.service.port }}"
 
     # Vector DB
     VDB_HOST: "{{ .Release.Name }}-milvus"
@@ -304,18 +413,16 @@ env:
     POSTGRES_HOST: "{{ .Release.Name }}-postgresql"
     POSTGRES_PORT: *pgPort
     POSTGRES_USER: *pgUser
-    # POSTGRES_PASSWORD is a secret — defined under env.secrets, not here in the
-    # (world-readable) ConfigMap.
 
     # Embedder
-    EMBEDDER_MODEL_NAME: *embedderModel
+    EMBEDDER_MODEL_NAME: '{{ .Values.vllm.embedderModelName }}'
     EMBEDDER_BASE_URL: "http://{{ .Release.Name }}-embedder-engine-service/v1"
 
     # Reranker
-    RERANKER_MODEL: *rerankerModel
+    RERANKER_MODEL: '{{ .Values.reranker.rerankerModelName }}'
     RERANKER_ENABLED: "true"
     RERANKER_TOP_K: "4"
-    RERANKER_BASE_URL: "http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}"
+    RERANKER_BASE_URL: '{{ if .Values.reranker.externalUrl }}{{ .Values.reranker.externalUrl }}{{ else }}http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}{{ end }}'
     RERANKER_MODEL_TYPE: "infinity"
 
     # Prompts
@@ -335,20 +442,33 @@ env:
     RAY_POOL_SIZE: "3"
     RAY_MAX_TASKS_PER_WORKER: "50"
     RAY_DASHBOARD_PORT: "8265"
-    RAY_ADDRESS: "ray://raycluster-head-svc:10001"
+    RAY_ADDRESS: "ray://{{ .Release.Name }}-raycluster-head-svc:10001"
     RAY_task_retry_delay_ms: "3000"
     RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 
     UV_LINK_MODE: "copy"
     UV_CACHE_DIR: "/tmp/uv-cache"
+    UV_PYTHON_PREFERENCE: "only-system"
+    UV_PYTHON: "python3"  # portable: finds python3 in PATH, bypasses .python-version patch-version mismatch
 
   secrets:
-    API_KEY: "sk-xxxx" # LLM API KEY
-    VLM_API_KEY: "sk-xxxx" # VLM API KEY
+    POSTGRES_PASSWORD: *pgPass
+    API_KEY: "sk-xxxx"           # LLM API key
+    VLM_API_KEY: "sk-xxxx"       # VLM API key
     EMBEDDER_API_KEY: "EMPTY"
     TRANSCRIBER_API_KEY: "EMPTY"
-    AUTH_TOKEN: "sk-xxxx" # API KEY for OpenRAG
-    HF_TOKEN: "hf_xxxx" # HuggingFace token
-    # DB password lives in the Secret (not the ConfigMap). Reuses the same
-    # value as postgresql.auth.password via the *pgPass anchor.
-    POSTGRES_PASSWORD: *pgPass
+    RERANKER_API_KEY: "EMPTY"  # Set when using an external reranker that requires authentication
+    AUTH_TOKEN: "sk-xxxx"        # OpenRAG API key
+    HF_TOKEN: "hf_xxxx"          # HuggingFace token
+
+# Arbitrary additional Kubernetes objects rendered at install time.
+# Each entry is a full resource manifest; Go templates are supported.
+# Example:
+# extraObjects:
+#   - apiVersion: v1
+#     kind: ConfigMap
+#     metadata:
+#       name: "{{ .Release.Name }}-extra"
+#     data:
+#       key: value
+extraObjects: []

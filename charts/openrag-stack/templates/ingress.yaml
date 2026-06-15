@@ -3,26 +3,31 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "openrag-stack.fullname" . }}-ingress
+  {{- with .Values.ingress.annotations }}
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
-    nginx.ingress.kubernetes.io/use-regex: "true"  
-    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
-
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
   rules:
     - http:
         paths:
           {{- if .Values.ingress.paths.openrag.enabled }}
           - path: /(.*)
-            pathType: ImplementationSpecific
+            pathType: Prefix
             backend:
               service:
-                name: raycluster-head-svc
+                name: {{ .Release.Name }}-raycluster-head-svc
                 port:
                   number: {{ .Values.env.config.RAY_SERVE_PORT }}
           {{- end }}
       {{- with .Values.ingress.host }}
       host: {{ . | quote }}
       {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}

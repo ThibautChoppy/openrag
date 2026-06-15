@@ -18,10 +18,21 @@ spec:
         app.kubernetes.io/name: indexer-ui
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- with .Values.indexerUi.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.indexerUi.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
       containers:
         - name: indexer-ui
           image: {{ .Values.indexerUi.image }}
           imagePullPolicy: {{ .Values.indexerUi.imagePullPolicy }}
+          {{- with .Values.indexerUi.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             {{- range $key, $value := .Values.indexerUi.env }}
             - name: {{ $key }}
@@ -31,7 +42,6 @@ spec:
             - containerPort: {{ .Values.indexerUi.service.targetPort }}
           resources:
             {{- toYaml .Values.indexerUi.resources | nindent 12 }}
-
 ---
 apiVersion: v1
 kind: Service
@@ -49,5 +59,6 @@ spec:
       nodePort: {{ .Values.indexerUi.service.nodePort }}
       {{- end }}
   selector:
-    app: indexer-ui
+    app.kubernetes.io/name: indexer-ui
+    app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

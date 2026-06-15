@@ -1,8 +1,16 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: rag-env
+  name: {{ .Release.Name }}-env
 data:
 {{- range $key, $value := .Values.env.config }}
   {{ $key }}: "{{ tpl (printf "%v" $value) $ }}"
+{{- end }}
+{{- if .Values.proxy.enabled }}
+  HTTP_PROXY: {{ .Values.proxy.url | quote }}
+  HTTPS_PROXY: {{ .Values.proxy.url | quote }}
+  http_proxy: {{ .Values.proxy.url | quote }}
+  https_proxy: {{ .Values.proxy.url | quote }}
+  NO_PROXY: {{ .Values.proxy.noProxy | quote }}
+  no_proxy: {{ .Values.proxy.noProxy | quote }}
 {{- end }}
