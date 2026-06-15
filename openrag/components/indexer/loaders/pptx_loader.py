@@ -19,9 +19,18 @@ class PPTXConverter:
     https://github.com/microsoft/markitdown/blob/main/packages/markitdown/src/markitdown/converters/_pptx_converter.py
     """
 
-    def __init__(self, image_placeholder=r"<image>", page_separator: str = "[PAGE_SEP]"):
+    def __init__(
+        self,
+        image_placeholder=r"<image>",
+        page_separator: str = "[PAGE_SEP]",
+        max_slides: int = 2000,
+        max_images: int = 2000,
+    ):
         self.image_placeholder = image_placeholder
         self.page_separator = page_separator
+        # Parser-bomb caps: bound slides processed and images decoded into memory.
+        self.max_slides = max_slides
+        self.max_images = max_images
 
     def convert(self, local_path):
         md_content = ""
@@ -30,12 +39,16 @@ class PPTXConverter:
         images_list = []
         for slide in presentation.slides:
             slide_num += 1
+            if slide_num > self.max_slides:
+                logger.warning("Capping slide processing", cap=self.max_slides)
+                break
 
             title = slide.shapes.title
             for shape in slide.shapes:
                 if self._is_picture(shape):
-                    images_list.append(Image.open(BytesIO(shape.image.blob)))
-                    md_content += self.image_placeholder
+                    if len(images_list) < self.max_images:
+                        images_list.append(Image.open(BytesIO(shape.image.blob)))
+                        md_content += self.image_placeholder
 
                 # Tables
                 if self._is_table(shape):
@@ -137,7 +150,13 @@ class PPTXLoader(BaseLoader):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.image_placeholder = r"<image>"
-        self.converter = PPTXConverter(image_placeholder=self.image_placeholder, page_separator=self.page_sep)
+        max_entries = int(self.config.loader.get("max_archive_entries", 2000))
+        self.converter = PPTXConverter(
+            image_placeholder=self.image_placeholder,
+            page_separator=self.page_sep,
+            max_slides=max_entries,
+            max_images=max_entries,
+        )
 
     async def aload_document(self, file_path, metadata=None, save_markdown=False):
         md_content, imgs = self.converter.convert(local_path=file_path)

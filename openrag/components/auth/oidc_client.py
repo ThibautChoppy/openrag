@@ -27,6 +27,9 @@ import httpx
 from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 
+# Clock-skew tolerance (seconds) for exp/nbf checks.
+_CLOCK_SKEW_LEEWAY = 60
+
 
 @dataclass
 class TokenBundle:
@@ -50,6 +53,7 @@ class LogoutTokenClaims:
     sid: str | None
     iat: int
     jti: str | None
+    exp: int = 0
 
 
 class OIDCClient:
@@ -291,8 +295,13 @@ class OIDCClient:
 
         if "exp" not in decoded:
             raise ValueError("ID token missing exp claim")
-        if int(decoded["exp"]) < now:
+        # Allow clock-skew leeway on the expiry check.
+        if int(decoded["exp"]) < now - _CLOCK_SKEW_LEEWAY:
             raise ValueError("ID token has expired")
+
+        # Reject not-yet-valid tokens (nbf), if present.
+        if "nbf" in decoded and int(decoded["nbf"]) > now + _CLOCK_SKEW_LEEWAY:
+            raise ValueError("ID token not yet valid (nbf in the future)")
 
         if "iat" not in decoded:
             raise ValueError("ID token missing iat claim")
@@ -345,8 +354,13 @@ class OIDCClient:
 
         if "iat" not in decoded:
             raise ValueError("logout_token missing iat claim")
-        if int(decoded.get("exp", now + 1)) < now:
+        # exp and jti are required by the spec (jti is used for replay detection).
+        if "exp" not in decoded:
+            raise ValueError("logout_token missing exp claim")
+        if int(decoded["exp"]) < now - _CLOCK_SKEW_LEEWAY:
             raise ValueError("logout_token has expired")
+        if not decoded.get("jti"):
+            raise ValueError("logout_token missing jti claim")
 
         events = decoded.get("events") or {}
         if "http://schemas.openid.net/event/backchannel-logout" not in events:
@@ -365,6 +379,7 @@ class OIDCClient:
             sid=decoded.get("sid"),
             iat=int(decoded["iat"]),
             jti=decoded.get("jti"),
+            exp=int(decoded["exp"]),
         )
 
     # ------------------------------------------------------------------

@@ -25,7 +25,9 @@ class ImageLoader(BaseLoader):
         try:
             # Handle SVG files by converting to PNG first
             if path.suffix.lower() == ".svg":
-                png_data = cairosvg.svg2png(url=str(path))
+                # unsafe=False (the default) blocks external fetches and XML
+                # entities in untrusted SVGs (SSRF/XXE); set it explicitly.
+                png_data = cairosvg.svg2png(url=str(path), unsafe=False)
                 img = Image.open(BytesIO(png_data))
             else:
                 img = Image.open(path)

@@ -644,28 +644,32 @@ class MilvusDB(BaseVectorDB):
     async def get_surrounding_chunks(self, docs: list[Document]) -> list[Document]:
         existant_ids = {doc.metadata.get("_id") for doc in docs}
 
-        # Collect all prev/next section IDs
-        section_ids = [
-            section_id
+        # Collect (section_id, partition) pairs. section_id is only unique within
+        # a partition, so the lookup MUST be scoped to the source doc's partition;
+        # otherwise a neighbouring section_id could resolve to another tenant's
+        # chunk (cross-tenant leak). Drop pairs with no partition rather than
+        # querying unscoped.
+        section_refs = [
+            (section_id, doc.metadata.get("partition"))
             for doc in docs
             for section_id in [
                 doc.metadata.get("prev_section_id"),
                 doc.metadata.get("next_section_id"),
             ]
-            if section_id is not None
+            if section_id is not None and doc.metadata.get("partition")
         ]
 
-        if not section_ids:
+        if not section_refs:
             return []
 
-        # Query all sections in parallel
+        # Query all sections in parallel, each scoped to its partition.
         tasks = [
             self._async_client.query(
                 collection_name=self.collection_name,
-                filter=f"section_id == {section_id}",
+                filter=f"section_id == {section_id} and partition == '{partition}'",
                 limit=1,
             )
-            for section_id in section_ids
+            for section_id, partition in section_refs
         ]
         responses = await asyncio.gather(*tasks)
 
@@ -1307,10 +1311,11 @@ class MilvusDB(BaseVectorDB):
         self.partition_file_manager.update_partition_member_role(partition, user_id, new_role)
         self.logger.info(f"User_id {user_id} role updated to '{new_role}' in partition '{partition}'.")
 
-    async def create_partition(self, partition: str, user_id: int):
+    async def create_partition(self, partition: str, user_id: int, max_owned: int | None = None) -> str:
         self._check_user_exists(user_id)
-        self.partition_file_manager.create_partition(partition, user_id)
-        self.logger.info(f"Partition '{partition}' created by user_id {user_id}.")
+        result = self.partition_file_manager.create_partition(partition, user_id, max_owned)
+        self.logger.info(f"create_partition '{partition}' by user_id {user_id}: {result}")
+        return result
 
     async def add_partition_member(self, partition: str, user_id: int, role: str):
         self._check_partition_exists(partition)

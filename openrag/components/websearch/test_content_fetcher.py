@@ -97,7 +97,7 @@ class TestFetchSingleURL:
         def fake_getaddrinfo(host, port, *args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))]
 
-        monkeypatch.setattr("components.websearch.content_fetcher.socket.getaddrinfo", fake_getaddrinfo)
+        monkeypatch.setattr("utils.ssrf.socket.getaddrinfo", fake_getaddrinfo)
         req = httpx.Request("GET", "http://internal.example.com/")
         with pytest.raises(httpx.RequestError):
             await fetcher._guard_request(req)
@@ -107,7 +107,7 @@ class TestFetchSingleURL:
         def fake_getaddrinfo(host, port, *args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
-        monkeypatch.setattr("components.websearch.content_fetcher.socket.getaddrinfo", fake_getaddrinfo)
+        monkeypatch.setattr("utils.ssrf.socket.getaddrinfo", fake_getaddrinfo)
         req = httpx.Request("GET", "http://example.com/")
         await fetcher._guard_request(req)  # must not raise
 

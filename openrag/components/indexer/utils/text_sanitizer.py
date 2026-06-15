@@ -95,6 +95,27 @@ def sanitize_text(
     return text
 
 
+# Control tokens a document could embed to forge citations or source boundaries:
+# "[Source N]" (block marker), "[Sources: 1, 3]" / "Sources: 1, 3" (answer tag),
+# and "----------" (separator). Neutralize them in untrusted text.
+_INJECT_SOURCE_BLOCK_RE = re.compile(r"\[\s*(sources?)\b", re.IGNORECASE)
+_INJECT_SOURCES_TAG_RE = re.compile(r"(?im)^([ \t]*)(sources?)(\s*:\s*)(\[?[\d,\s]+\]?)[ \t]*$")
+_INJECT_SEPARATOR_RE = re.compile(r"-{4,}")
+
+
+def neutralize_prompt_control_tokens(text: str) -> str:
+    """Defang RAG control tokens in untrusted text so they can't fake markers."""
+    if not text:
+        return text
+    # "[Source...]" / "[Sources...]" -> open paren so it can't start a marker.
+    text = _INJECT_SOURCE_BLOCK_RE.sub(r"(\1", text)
+    # Break the unbracketed "Sources: 1, 2" line form the parser also matches.
+    text = _INJECT_SOURCES_TAG_RE.sub(r"\1\2 \4", text)
+    # Cap long hyphen runs so they can't reproduce the separator.
+    text = _INJECT_SEPARATOR_RE.sub("---", text)
+    return text
+
+
 def clean_markdown_table_spacing(markdown_table: str) -> str:
     """
     Normalize spacing inside a markdown table:

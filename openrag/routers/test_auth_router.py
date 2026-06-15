@@ -104,6 +104,7 @@ def _logout_token_payload(*, sid: str | None = None, sub: str | None = None) -> 
         "iss": ISSUER,
         "aud": CLIENT_ID,
         "iat": now,
+        "exp": now + 300,
         "jti": "lt-001",
         "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
     }
