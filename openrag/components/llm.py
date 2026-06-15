@@ -32,12 +32,13 @@ class LLM:
         if llm_override.get("model"):
             payload["model"] = llm_override["model"]
 
-        base_url = (llm_override.get("base_url") or self._base_url).rstrip("/")
-        api_key = llm_override.get("api_key") or self._api_key
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
+        # Only `model` may be overridden by the client. `base_url` / `api_key`
+        # are deliberately NOT read from the request: honoring a client-supplied
+        # endpoint enables SSRF (the server would issue requests to an arbitrary
+        # host) and would leak the server's API key to that host. The endpoint
+        # and credentials always come from server configuration.
+        base_url = self._base_url.rstrip("/")
+        headers = self.headers
 
         return payload, base_url, headers
 
