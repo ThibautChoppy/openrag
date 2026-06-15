@@ -1,3 +1,4 @@
+{{- if .Values.reranker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,11 +18,19 @@ spec:
         app.kubernetes.io/name: reranker
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.reranker.runtimeClassName }}
       runtimeClassName: {{ .Values.reranker.runtimeClassName }}
-      nodeSelector: {{- toYaml .Values.reranker.nodeSelector | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.reranker.podSecurityContext | nindent 8 }}
+      {{- with .Values.reranker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: reranker
           image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
+          securityContext:
+            {{- toYaml .Values.reranker.containerSecurityContext | nindent 12 }}
           args:
             - "v2"
             - "--model-id"
@@ -32,16 +41,30 @@ spec:
             - containerPort: {{ .Values.reranker.service.port }}
           resources:
             {{- toYaml .Values.reranker.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.reranker.service.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.reranker.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: hf-cache
               mountPath: /app/.cache/huggingface
           envFrom:
             - configMapRef:
-                name: rag-env
+                name: {{ .Release.Name }}-env
       volumes:
         - name: hf-cache
           persistentVolumeClaim:
-            claimName: rag-model-weights
+            claimName: {{ .Release.Name }}-model-weights
 ---
 apiVersion: v1
 kind: Service
@@ -59,3 +82,4 @@ spec:
       port: {{ .Values.reranker.service.port }}
       targetPort: {{ .Values.reranker.service.port }}
   type: {{ .Values.reranker.service.type }}
+{{- end }}
