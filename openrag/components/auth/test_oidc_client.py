@@ -403,7 +403,8 @@ class TestVerifyLogoutToken:
         _setup_discovery(client._mock_router)
         _setup_jwks(client._mock_router)
 
-        token = _sign_jwt(_logout_token_payload(extra={"exp": int(time.time()) - 10}))
+        # Beyond the clock-skew leeway so it is unambiguously expired.
+        token = _sign_jwt(_logout_token_payload(extra={"exp": int(time.time()) - 300}))
         with pytest.raises(ValueError, match="expired"):
             await client.verify_logout_token(token)
 

@@ -27,6 +27,10 @@ import httpx
 from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 
+# Clock-skew tolerance (seconds) applied to time-based JWT claims (exp/nbf) so
+# small drift between the IdP and this host doesn't reject valid tokens.
+_CLOCK_SKEW_LEEWAY = 60
+
 
 @dataclass
 class TokenBundle:
@@ -292,8 +296,14 @@ class OIDCClient:
 
         if "exp" not in decoded:
             raise ValueError("ID token missing exp claim")
-        if int(decoded["exp"]) < now:
+        # Allow a small clock-skew leeway so a few seconds of drift between the
+        # IdP and this host doesn't spuriously reject otherwise-valid tokens.
+        if int(decoded["exp"]) < now - _CLOCK_SKEW_LEEWAY:
             raise ValueError("ID token has expired")
+
+        # Honour nbf (not-before) if present, with the same leeway.
+        if "nbf" in decoded and int(decoded["nbf"]) > now + _CLOCK_SKEW_LEEWAY:
+            raise ValueError("ID token not yet valid (nbf in the future)")
 
         if "iat" not in decoded:
             raise ValueError("ID token missing iat claim")
@@ -350,7 +360,7 @@ class OIDCClient:
         # (an absent exp previously meant the token never expired).
         if "exp" not in decoded:
             raise ValueError("logout_token missing exp claim")
-        if int(decoded["exp"]) < now:
+        if int(decoded["exp"]) < now - _CLOCK_SKEW_LEEWAY:
             raise ValueError("logout_token has expired")
         # jti is REQUIRED and is what enables replay detection by the caller.
         if not decoded.get("jti"):
