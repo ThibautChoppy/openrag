@@ -15,7 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
 
-ray.init(dashboard_host="0.0.0.0")
+# Bind the Ray dashboard to localhost by default; the dashboard / Jobs API is
+# unauthenticated (CVE-2023-48022 "ShadowRay") so it must never listen on a
+# routable interface. Operators that front it with an auth proxy can override
+# via RAY_DASHBOARD_HOST.
+ray.init(dashboard_host=os.environ.get("RAY_DASHBOARD_HOST", "127.0.0.1"))
 
 # Apply noqa: E402 to ignore "module level import not at top of file" cause ray.init has to be called first
 
