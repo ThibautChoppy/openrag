@@ -1,14 +1,7 @@
 #!/bin/bash
-# OpenShift (and any runtime that injects an arbitrary UID) starts this
-# container with a UID that has no /etc/passwd entry. Dependencies that call
-# pwd.getpwuid()/getpass.getuser() (Ray, uv, Hugging Face) crash without one,
-# so add an entry on the fly. /etc/passwd is group-writable (GID 0) for exactly
-# this, per the OpenShift container guidelines. Use a UID-specific name so we
-# never collide with the image's baked-in `openrag` user (a different UID).
-if ! whoami >/dev/null 2>&1 && [[ -w /etc/passwd ]]; then
-  uid="$(id -u)"
-  printf 'openrag-%s:x:%s:0:OpenRAG:/app/home:/sbin/nologin\n' "$uid" "$uid" >> /etc/passwd
-fi
+# The arbitrary UID OpenShift assigns has no /etc/passwd entry. Rather than
+# write one here (which would require a group-writable /etc/passwd), the image
+# sets USER/LOGNAME so getpass.getuser() resolves from the environment.
 
 ENV_ARGS=()
 if [[ -n "${SHARED_ENV}" ]]; then
