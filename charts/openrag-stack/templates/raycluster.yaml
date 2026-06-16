@@ -173,4 +173,36 @@ spec:
               persistentVolumeClaim:
                 claimName: {{ $.Release.Name }}-venv
   {{- end }}
+{{- if .Values.ray.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openrag-stack.fullname" . }}-raycluster
+  {{- with .Values.ray.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ray.ingress.className }}
+  ingressClassName: {{ .Values.ray.ingress.className | quote }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.ray.ingress.path }}
+            pathType: {{ .Values.ray.ingress.pathType }}
+            backend:
+              service:
+                name: {{ .Release.Name }}-raycluster-head-svc
+                port:
+                  number: {{ .Values.env.config.RAY_SERVE_PORT }}
+      {{- with .Values.ray.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+  {{- with .Values.ray.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
 {{- end }}

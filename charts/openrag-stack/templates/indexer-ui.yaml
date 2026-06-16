@@ -61,4 +61,36 @@ spec:
   selector:
     app.kubernetes.io/name: indexer-ui
     app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.indexerUi.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openrag-stack.fullname" . }}-indexer-ui
+  {{- with .Values.indexerUi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.indexerUi.ingress.className }}
+  ingressClassName: {{ .Values.indexerUi.ingress.className | quote }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.indexerUi.ingress.path }}
+            pathType: {{ .Values.indexerUi.ingress.pathType }}
+            backend:
+              service:
+                name: {{ .Release.Name }}-indexer-ui
+                port:
+                  number: {{ .Values.indexerUi.service.port }}
+      {{- with .Values.indexerUi.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+  {{- with .Values.indexerUi.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
 {{- end }}

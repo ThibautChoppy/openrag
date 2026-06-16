@@ -72,8 +72,8 @@ spec:
               mountPath: /app/logs
             - name: venv
               mountPath: /app/.venv
-            - name: egg-info
-              mountPath: /app/openrag.egg-info
+            # - name: egg-info
+            #   mountPath: /app/openrag.egg-info
       volumes:
         - name: model-weights
           persistentVolumeClaim:
@@ -87,8 +87,8 @@ spec:
         - name: venv
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-venv
-        - name: egg-info
-          emptyDir: {}
+        # - name: egg-info
+        #   emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -106,3 +106,35 @@ spec:
       port: {{ .Values.openrag.service.port }}
       targetPort: {{ .Values.openrag.service.port }}
   type: {{ .Values.openrag.service.type }}
+{{- if .Values.openrag.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openrag-stack.fullname" . }}-openrag
+  {{- with .Values.openrag.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.openrag.ingress.className }}
+  ingressClassName: {{ .Values.openrag.ingress.className | quote }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.openrag.ingress.path }}
+            pathType: {{ .Values.openrag.ingress.pathType }}
+            backend:
+              service:
+                name: {{ .Release.Name }}-openrag
+                port:
+                  number: {{ .Values.openrag.service.port }}
+      {{- with .Values.openrag.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+  {{- with .Values.openrag.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

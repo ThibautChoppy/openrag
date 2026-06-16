@@ -40,7 +40,7 @@ ray:
   resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
     repository: ghcr.io/linagora/openrag-ray
-    tag: "v1.1.11"
+    tag: "v1.1.12"
   resources:
     head:
       requests:
@@ -50,6 +50,16 @@ ray:
       requests:
         cpu: "4"
         memory: "8Gi"
+  ingress:
+    enabled: true
+    className: ""
+    host: ""
+    annotations: {}
+      # nginx.ingress.kubernetes.io/rewrite-target: /
+      # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    tls: []
+    path: /
+    pathType: Prefix
 
 # === PostgreSQL (bitnami) ===
 postgresql:
@@ -266,6 +276,14 @@ indexerUi:
 
   ingress:
     enabled: false
+    className: ""
+    host: ""
+    annotations: {}
+      # nginx.ingress.kubernetes.io/rewrite-target: /
+      # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    tls: []
+    path: /
+    pathType: Prefix
 
   resources: {}
 
@@ -284,10 +302,21 @@ indexerUi:
 openrag:
   image:
     repository: linagoraai/openrag
-    tag: "v1.1.11"
+    tag: "v1.1.12"
   service:
     type: ClusterIP
     port: 8080
+  ingress:
+    enabled: true
+    className: ""
+    host: ""
+    annotations: {}
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    tls: []
+    path: /api
+    pathType: Prefix
   resources:
     requests:
       cpu: "4"
@@ -328,19 +357,6 @@ openrag:
       initialDelaySeconds: 60
       periodSeconds: 30
       failureThreshold: 3
-
-ingress:
-  enabled: true
-  className: ""
-  host: ""
-  annotations: {}
-    # nginx.ingress.kubernetes.io/rewrite-target: /$1
-    # nginx.ingress.kubernetes.io/use-regex: "true"
-    # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
-
-  paths:
-    openrag:
-      enabled: true
 
 # === Outbound proxy ===
 # Set enabled: true when the cluster has no direct internet access.
