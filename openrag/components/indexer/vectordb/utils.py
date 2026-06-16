@@ -54,6 +54,7 @@ class PartitionFileManager:
             )
 
     def _ensure_admin_user(self, admin_token: str):
+        token_provided = bool(admin_token)
         if not admin_token:
             admin_token = f"or-{secrets.token_hex(16)}"
         hashed_token = self.hash_token(admin_token)
@@ -70,9 +71,13 @@ class PartitionFileManager:
                 self.logger.info("Created admin user")
             else:
                 admin.is_admin = True
-                admin.token = hashed_token
+                # Only (re)set the token when one was explicitly supplied via
+                # AUTH_TOKEN; otherwise keep the stored token so it doesn't
+                # rotate on every startup and invalidate existing clients.
+                if token_provided:
+                    admin.token = hashed_token
                 s.commit()
-                self.logger.info("Upgraded existing user to admin")
+                self.logger.info("Ensured admin user (id=1)")
 
     def list_partition_files(self, partition: str, limit: int | None = None):
         """List files in a partition with optional limit - Optimized by querying File table directly"""
@@ -435,6 +440,9 @@ class PartitionFileManager:
             user.token = hashed_token
             s.commit()
             s.refresh(user)
+            # Rotating the API token also invalidates the user's active OIDC
+            # browser sessions so they can't outlive the rotation.
+            self.revoke_oidc_sessions_by_user_id(user_id)
 
             return {
                 "id": user.id,
@@ -1112,6 +1120,22 @@ class PartitionFileManager:
                 row.revoked_at = now
                 s.commit()
                 self.logger.bind(session_id=session_id).info("Revoked OIDC session")
+
+    def revoke_oidc_sessions_by_user_id(self, user_id: int) -> int:
+        """Revoke all active OIDC sessions for a user (e.g. on API-token rotation)."""
+        now = datetime.now()
+        with self.Session() as s:
+            stmt = (
+                update(OIDCSession)
+                .where(OIDCSession.user_id == user_id)
+                .where(OIDCSession.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
+            result = s.execute(stmt)
+            s.commit()
+            count = result.rowcount or 0
+            self.logger.bind(user_id=user_id, count=count).info("Revoked OIDC sessions by user_id")
+            return count
 
     def cleanup_expired_oidc_sessions(self) -> int:
         """Delete rows whose ``session_expires_at`` is older than 7 days.

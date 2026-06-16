@@ -98,7 +98,11 @@ def sanitize_text(
 # Control tokens a document could embed to forge citations or source boundaries:
 # "[Source N]" (block marker), "[Sources: 1, 3]" / "Sources: 1, 3" (answer tag),
 # and "----------" (separator). Neutralize them in untrusted text.
-_INJECT_SOURCE_BLOCK_RE = re.compile(r"\[\s*(sources?)\b", re.IGNORECASE)
+# Capture an optional trailing colon: dropping it also breaks the answer-tag form
+# "[Sources: 1, 2]". The output parser's bracket is optional (\[?), so neutralizing
+# only the "[" would leave "(Sources: 1, 2]" — still a parser match. Removing the
+# colon defangs the keyword the parser keys on.
+_INJECT_SOURCE_BLOCK_RE = re.compile(r"\[\s*(sources?)\b(\s*:)?", re.IGNORECASE)
 _INJECT_SOURCES_TAG_RE = re.compile(r"(?im)^([ \t]*)(sources?)(\s*:\s*)(\[?[\d,\s]+\]?)[ \t]*$")
 _INJECT_SEPARATOR_RE = re.compile(r"-{4,}")
 
@@ -107,8 +111,9 @@ def neutralize_prompt_control_tokens(text: str) -> str:
     """Defang RAG control tokens in untrusted text so they can't fake markers."""
     if not text:
         return text
-    # "[Source...]" / "[Sources...]" -> open paren so it can't start a marker.
-    text = _INJECT_SOURCE_BLOCK_RE.sub(r"(\1", text)
+    # "[Source...]" / "[Sources...]" -> open paren so it can't start a marker, and
+    # drop any "[Sources:" colon so the answer-tag parser can't match the remainder.
+    text = _INJECT_SOURCE_BLOCK_RE.sub(lambda m: "(" + m.group(1) + (" " if m.group(2) else ""), text)
     # Break the unbracketed "Sources: 1, 2" line form the parser also matches.
     text = _INJECT_SOURCES_TAG_RE.sub(r"\1\2 \4", text)
     # Cap long hyphen runs so they can't reproduce the separator.

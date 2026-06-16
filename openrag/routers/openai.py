@@ -354,7 +354,13 @@ async def openai_chat_completion(
 
         return StreamingResponse(stream_response(), media_type="text/event-stream")
     else:
-        chunk = await llm_output.__anext__()
+        try:
+            chunk = await llm_output.__anext__()
+        except StopAsyncIteration:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Empty response from upstream LLM",
+            )
         chunk["model"] = model_name
 
         content = chunk.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
@@ -430,7 +436,13 @@ async def openai_completion(
 
     sources = __prepare_sources(request2, docs)
 
-    complete_response = await llm_output.__anext__()
+    try:
+        complete_response = await llm_output.__anext__()
+    except StopAsyncIteration:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Empty response from upstream LLM",
+        )
 
     text = complete_response.get("choices", [{}])[0].get("text", "") or ""
     clean_text, citations = extract_and_strip_sources_block(text)

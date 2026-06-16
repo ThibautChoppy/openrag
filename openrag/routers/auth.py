@@ -195,6 +195,10 @@ def _sanitize_next_url(next_url: str | None) -> str:
     """
     if not next_url:
         return "/"
+    # Reject backslashes (browsers treat "\" as "/", so "/\evil.com" resolves
+    # protocol-relative) and any control chars (CR/LF header injection).
+    if "\\" in next_url or any(ord(c) < 0x20 or ord(c) == 0x7F for c in next_url):
+        return "/"
     if next_url.startswith("/") and not next_url.startswith("//"):
         return next_url
     # Absolute URL: only allow whitelisted origins.
@@ -441,6 +445,16 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                 return _json_error(
                     status.HTTP_400_BAD_REQUEST,
                     "Failed to fetch userinfo from IdP.",
+                    delete_state_cookie=True,
+                )
+            # Bind userinfo to the verified ID token: per the OIDC spec the
+            # userinfo `sub` MUST equal the ID token `sub`, else the response
+            # could describe a different principal (token substitution).
+            if claims_for_mapping.get("sub") != sub:
+                logger.warning(f"OIDC userinfo sub mismatch for user_id={user['id']}")
+                return _json_error(
+                    status.HTTP_400_BAD_REQUEST,
+                    "userinfo sub does not match ID token.",
                     delete_state_cookie=True,
                 )
         else:
