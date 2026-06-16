@@ -315,7 +315,7 @@ openrag:
       # nginx.ingress.kubernetes.io/use-regex: "true"
       # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
     tls: []
-    path: /api
+    path: /
     pathType: Prefix
   resources:
     requests:

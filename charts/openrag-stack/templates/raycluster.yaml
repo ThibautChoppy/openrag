@@ -196,7 +196,7 @@ spec:
               service:
                 name: {{ .Release.Name }}-raycluster-head-svc
                 port:
-                  number: {{ .Values.env.config.RAY_SERVE_PORT }}
+                  number: {{ .Values.env.config.RAY_DASHBOARD_PORT }}
       {{- with .Values.ray.ingress.host }}
       host: {{ . | quote }}
       {{- end }}
