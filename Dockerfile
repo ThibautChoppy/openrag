@@ -33,11 +33,17 @@ WORKDIR /app
 # dedicated writable subdir (not /app) so libraries that fall back to $HOME
 # never need /app itself writable. UV_FROZEN keeps `uv run` from rewriting
 # uv.lock at runtime, so the project root can stay read-only.
+# USER/LOGNAME are set because the arbitrary UID OpenShift assigns has no
+# /etc/passwd entry: getpass.getuser() reads these env vars first and so
+# resolves without a passwd lookup (the same approach used for the vllm
+# service in docker-compose.yaml). This avoids making /etc/passwd writable.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_CACHE_DIR=/opt/uv/cache \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_FROZEN=1 \
-    HOME=/app/home
+    HOME=/app/home \
+    USER=openrag \
+    LOGNAME=openrag
 
 # Install uv & setup venv
 COPY pyproject.toml uv.lock ./
@@ -74,9 +80,6 @@ ENV APP_iPORT=${APP_iPORT:-8080}
 # arbitrary-UID remap does not happen; APP_UID is a build arg so a compose
 # build can match the host user that owns the bind-mounted volumes. The user's
 # primary group is 0 so it shares the same group access on either platform.
-# /etc/passwd is made group-writable so the entrypoint can add an entry for the
-# arbitrary UID; libraries that call getpass.getuser()/pwd.getpwuid() (Ray, uv,
-# HF) otherwise crash when the running UID has no passwd entry.
 ARG APP_UID=10001
 RUN useradd --uid ${APP_UID} --gid 0 --no-log-init --no-create-home \
         --home-dir /app/home --shell /sbin/nologin openrag \
@@ -84,7 +87,6 @@ RUN useradd --uid ${APP_UID} --gid 0 --no-log-init --no-create-home \
         /app/.venv /app/openrag.egg-info /opt/uv/cache \
     && chgrp -R 0 /app /opt/uv \
     && chmod -R g-w /app /opt/uv \
-    && chmod g=u /etc/passwd \
     && chmod -R g=u /app/home /app/data /app/db /app/logs /app/model_weights \
         /app/.venv /app/openrag.egg-info /opt/uv/cache
 USER ${APP_UID}
