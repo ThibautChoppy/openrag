@@ -1,4 +1,8 @@
 #!/bin/bash
+# The arbitrary UID OpenShift assigns has no /etc/passwd entry. Rather than
+# write one here (which would require a group-writable /etc/passwd), the image
+# sets USER/LOGNAME so getpass.getuser() resolves from the environment.
+
 ENV_ARGS=()
 if [[ -n "${SHARED_ENV}" ]]; then
   ENV_ARGS+=("--env-file=${SHARED_ENV}")
