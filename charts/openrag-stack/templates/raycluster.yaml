@@ -2,7 +2,7 @@
 apiVersion: ray.io/v1
 kind: RayCluster
 metadata:
-  name: {{ .Release.Name }}-raycluster
+  name: {{ include "openrag-stack.fullname" . }}-raycluster
   {{- with .Values.ray.annotations }}
   annotations:
     {{- . | toYaml | nindent 4 }}
@@ -95,16 +95,16 @@ spec:
         volumes:
           - name: model-weights
             persistentVolumeClaim:
-              claimName: {{ .Release.Name }}-model-weights
+              claimName: {{ include "openrag-stack.fullname" . }}-model-weights
           - name: data
             persistentVolumeClaim:
-              claimName: {{ .Release.Name }}-data
+              claimName: {{ include "openrag-stack.fullname" . }}-data
           - name: logs
             persistentVolumeClaim:
-              claimName: {{ .Release.Name }}-logs
+              claimName: {{ include "openrag-stack.fullname" . }}-logs
           - name: venv
             persistentVolumeClaim:
-              claimName: {{ .Release.Name }}-venv
+              claimName: {{ include "openrag-stack.fullname" . }}-venv
 
   workerGroupSpecs:
   {{- range $i, $e := until (.Values.ray.workers.count | int) }}
@@ -196,7 +196,7 @@ spec:
             pathType: {{ .Values.ray.ingress.pathType }}
             backend:
               service:
-                name: {{ .Release.Name }}-raycluster-head-svc
+                name: {{ include "openrag-stack.fullname" . }}-raycluster-head-svc
                 port:
                   number: {{ .Values.env.config.RAY_DASHBOARD_PORT }}
       {{- with .Values.ray.ingress.host }}

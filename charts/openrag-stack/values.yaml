@@ -123,7 +123,7 @@ vllm:
 
   # Single source for the HF_TOKEN secret name passed to all four model specs.
   # YAML anchor: editing this value propagates to all four hf_token.secretName entries below.
-  # Must match the chart env secret name ({{ .Release.Name }}-env-secrets by default).
+  # Must match the chart env secret name ({{ include "openrag-stack.fullname" . }}-env-secrets by default).
   # values.yaml is not templated, so set this manually when your release is not named "rag":
   #   --set "vllm.servingEngineSpec.modelSpec[0].hf_token.secretName=<release>-env-secrets"
   #   (repeat for indices 1, 2, 3 — see NOTES after install for the exact commands)
@@ -277,7 +277,7 @@ indexerUi:
   replicaCount: 1
 
   env:
-    API_BASE_URL: "http://{{ .Release.Name }}-openrag:8080"
+    API_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-openrag:8080'
     INCLUDE_CREDENTIALS: "false"
 
   service:
@@ -430,12 +430,12 @@ env:
 
   config:
     # LLM
-    BASE_URL: "http://{{ .Release.Name }}-llm-engine-service/v1/"
+    BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-llm-engine-service/v1/'
     MODEL: '{{ .Values.vllm.llmModelName }}'
     LLM_SEMAPHORE: "50"
 
     # VLM
-    VLM_BASE_URL: "http://{{ .Release.Name }}-vlm-engine-service/v1/"
+    VLM_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-vlm-engine-service/v1/'
     VLM_MODEL: '{{ .Values.vllm.vlmModelName }}'
     VLM_SEMAPHORE: "50"
 
@@ -448,27 +448,27 @@ env:
     WITH_CHAINLIT_UI: "false"
     SAVE_UPLOADED_FILES: "false"
     API_NUM_WORKERS: "8"
-    INDEXERUI_URL: "http://{{ .Release.Name }}-indexer-ui:{{ .Values.indexerUi.service.port }}"
+    INDEXERUI_URL: 'http://{{ include "openrag-stack.fullname" . }}-indexer-ui:{{ .Values.indexerUi.service.port }}'
 
     # Vector DB
-    VDB_HOST: "{{ .Release.Name }}-milvus"
+    VDB_HOST: '{{ include "openrag-stack.fullname" . }}-milvus'
     VDB_PORT: "19530"
     VDB_CONNECTOR_NAME: "milvus"
 
     # PostgreSQL
-    POSTGRES_HOST: "{{ .Release.Name }}-postgresql"
+    POSTGRES_HOST: '{{ include "openrag-stack.fullname" . }}-postgresql'
     POSTGRES_PORT: *pgPort
     POSTGRES_USER: *pgUser
 
     # Embedder
     EMBEDDER_MODEL_NAME: '{{ .Values.vllm.embedderModelName }}'
-    EMBEDDER_BASE_URL: "http://{{ .Release.Name }}-embedder-engine-service/v1"
+    EMBEDDER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-embedder-engine-service/v1'
 
     # Reranker
     RERANKER_MODEL: '{{ .Values.reranker.rerankerModelName }}'
     RERANKER_ENABLED: "true"
     RERANKER_TOP_K: "4"
-    RERANKER_BASE_URL: 'http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}'
+    RERANKER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-reranker:{{ .Values.reranker.servicePort }}'
     RERANKER_MODEL_TYPE: "infinity"
 
     # Prompts
@@ -481,14 +481,14 @@ env:
     MARKER_MAX_PROCESSES: "15"
     MARKER_POOL_SIZE: "3"
     MARKER_NUM_GPUS: "0.6"
-    TRANSCRIBER_BASE_URL: "http://{{ .Release.Name }}-whisper-engine-service/v1"
+    TRANSCRIBER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-whisper-engine-service/v1'
 
     # Ray
     RAY_NUM_GPUS: "0.1"
     RAY_POOL_SIZE: "3"
     RAY_MAX_TASKS_PER_WORKER: "50"
     RAY_DASHBOARD_PORT: "8265"
-    RAY_ADDRESS: "ray://{{ .Release.Name }}-raycluster-head-svc:10001"
+    RAY_ADDRESS: 'ray://{{ include "openrag-stack.fullname" . }}-raycluster-head-svc:10001'
     RAY_task_retry_delay_ms: "3000"
     RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 
@@ -514,7 +514,7 @@ env:
 #   - apiVersion: v1
 #     kind: ConfigMap
 #     metadata:
-#       name: "{{ .Release.Name }}-extra"
+#       name: "{{ include "openrag-stack.fullname" . }}-extra"
 #     data:
 #       key: value
 extraObjects: []

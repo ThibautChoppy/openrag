@@ -82,7 +82,7 @@ spec:
             pathType: {{ .Values.indexerUi.ingress.pathType }}
             backend:
               service:
-                name: {{ .Release.Name }}-indexer-ui
+                name: {{ include "openrag-stack.fullname" . }}-indexer-ui
                 port:
                   number: {{ .Values.indexerUi.service.port }}
       {{- with .Values.indexerUi.ingress.host }}
