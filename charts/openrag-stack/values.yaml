@@ -25,7 +25,6 @@ persistence:
     data: { size: 20Gi }
     hydraConfig: { size: 10Mi }
     logs: { size: 1Gi }
-    venv: { size: 10Gi }
 
 # === KubeRay operator (sub-chart) ===
 kuberay:
@@ -323,9 +322,13 @@ openrag:
     className: ""
     host: ""
     annotations: {}
-      # nginx.ingress.kubernetes.io/rewrite-target: /$1
-      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # For OpenShift HAProxy ingress — increase timeout for large file uploads
+      # (HAProxy default is 30s; uploads over slow links or large files need more):
+      # haproxy.router.openshift.io/timeout: 600s
+      #
+      # For nginx ingress — body size limit (default 1m, raise for large files):
       # nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+      # nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     tls: []
     path: /
     pathType: Prefix
@@ -357,7 +360,7 @@ openrag:
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
-    readOnlyRootFilesystem: false  # app writes to /app/.venv and /tmp
+    readOnlyRootFilesystem: false  # app writes to /tmp and other runtime paths
   # Probe configuration. Override with exec probes when ENABLE_RAY_SERVE=true,
   # since the Ray Serve HTTP proxy runs on the Ray head (not on this pod).
   probes:
@@ -389,7 +392,7 @@ openrag:
 proxy:
   enabled: false
   url: "http://192.168.100.100:80"
-  noProxy: "localhost,127.0.0.1,.cluster.local,.svc,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  noProxy: "localhost,127.0.0.1,.cluster.local,.svc,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,huggingface.co,hf.co,*.huggingface.co,*.hf.co"
 
 # === Shared env (config + secrets) ===
 env:
@@ -482,13 +485,14 @@ env:
     MARKER_POOL_SIZE: "3"
     MARKER_NUM_GPUS: "0.6"
     TRANSCRIBER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-whisper-engine-service/v1'
+    AUDIOLOADER: "VideoAudioLoader"
 
     # Ray
     RAY_NUM_GPUS: "0.1"
     RAY_POOL_SIZE: "3"
     RAY_MAX_TASKS_PER_WORKER: "50"
     RAY_DASHBOARD_PORT: "8265"
-    RAY_ADDRESS: 'ray://{{ include "openrag-stack.fullname" . }}-raycluster-head-svc:10001'
+    # RAY_ADDRESS: 'ray://{{ include "openrag-stack.fullname" . }}-raycluster-head-svc:10001'
     RAY_task_retry_delay_ms: "3000"
     RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 

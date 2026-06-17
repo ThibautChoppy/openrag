@@ -19,24 +19,6 @@ spec:
     spec:
       securityContext:
         {{- toYaml .Values.openrag.podSecurityContext | nindent 8 }}
-      initContainers:
-        - name: init-venv
-          image: "{{ .Values.openrag.image.registry | default .Values.global.image.registry }}/{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
-          command:
-            - sh
-            - -c
-            - |
-              echo "Waiting for Python env in /app/.venv..."
-              while [ ! -f /app/.venv/.ready ]; do
-                sleep 3
-              done
-              echo "Venv is ready."
-          envFrom:
-            - configMapRef:
-                name: {{ include "openrag-stack.fullname" . }}-env
-          volumeMounts:
-            - name: venv
-              mountPath: /app/.venv
       containers:
         - name: openrag
           image: "{{ .Values.openrag.image.registry | default .Values.global.image.registry }}/{{ .Values.openrag.image.repository }}:{{ .Values.openrag.image.tag }}"
@@ -74,8 +56,6 @@ spec:
               mountPath: /app/data
             - name: logs
               mountPath: /app/logs
-            - name: venv
-              mountPath: /app/.venv
             # - name: egg-info
             #   mountPath: /app/openrag.egg-info
       volumes:
@@ -88,9 +68,6 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: {{ include "openrag-stack.fullname" . }}-logs
-        - name: venv
-          persistentVolumeClaim:
-            claimName: {{ include "openrag-stack.fullname" . }}-venv
         # - name: egg-info
         #   emptyDir: {}
 ---

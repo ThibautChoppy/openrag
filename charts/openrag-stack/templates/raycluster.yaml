@@ -24,32 +24,6 @@ spec:
         securityContext:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        initContainers:
-          - name: init-venv-sync
-            image: "{{ .Values.ray.image.registry | default .Values.global.image.registry }}/{{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}"
-            command:
-              - sh
-              - -c
-              - |
-                set -e
-                if [ -f /app/.venv/.ready ] && /app/.venv/bin/python --version > /dev/null 2>&1; then
-                  echo "Existing valid env detected, skipping install."
-                else
-                  echo "Env missing or invalid, rebuilding..."
-                  rm -rf /app/.venv/*
-                  uv venv --python python3 /app/.venv
-                  uv sync --no-dev
-                  touch /app/.venv/.ready
-                fi
-            envFrom:
-              - configMapRef:
-                  name: {{ include "openrag-stack.fullname" . }}-env
-              - secretRef:
-                  name: {{ include "openrag-stack.secretName" . }}
-            volumeMounts:
-              - name: venv
-                mountPath: /app/.venv
-
         containers:
           - name: ray-head
             image: "{{ .Values.ray.image.registry | default .Values.global.image.registry }}/{{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}"
@@ -81,8 +55,6 @@ spec:
                 mountPath: /app/data
               - name: logs
                 mountPath: /app/logs
-              - name: venv
-                mountPath: /app/.venv
             envFrom:
               - configMapRef:
                   name: {{ include "openrag-stack.fullname" . }}-env
@@ -102,9 +74,6 @@ spec:
           - name: logs
             persistentVolumeClaim:
               claimName: {{ include "openrag-stack.fullname" . }}-logs
-          - name: venv
-            persistentVolumeClaim:
-              claimName: {{ include "openrag-stack.fullname" . }}-venv
 
   workerGroupSpecs:
   {{- range $i, $e := until (.Values.ray.workers.count | int) }}
@@ -122,21 +91,6 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          initContainers:
-            - name: init-venv
-              image: "{{ $.Values.ray.image.registry | default $.Values.global.image.registry }}/{{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}"
-              command:
-                - sh
-                - -c
-                - |
-                  echo "Waiting for Python env in /app/.venv..."
-                  while [ ! -f /app/.venv/.ready ]; do
-                    sleep 3
-                  done
-                  echo "Venv is ready."
-              volumeMounts:
-                - name: venv
-                  mountPath: /app/.venv
           containers:
             - name: ray-worker
               image: "{{ $.Values.ray.image.registry | default $.Values.global.image.registry }}/{{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}"
@@ -150,8 +104,6 @@ spec:
                   mountPath: /app/data
                 - name: logs
                   mountPath: /app/logs
-                - name: venv
-                  mountPath: /app/.venv
               envFrom:
                 - configMapRef:
                     name: {{ include "openrag-stack.fullname" $ }}-env
@@ -171,9 +123,6 @@ spec:
             - name: logs
               persistentVolumeClaim:
                 claimName: {{ $.Release.Name }}-logs
-            - name: venv
-              persistentVolumeClaim:
-                claimName: {{ $.Release.Name }}-venv
   {{- end }}
 {{- if .Values.ray.ingress.enabled }}
 ---
