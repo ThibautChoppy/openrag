@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-openrag
+  name: {{ include "openrag-stack.fullname" . }}-openrag
   labels:
     app.kubernetes.io/name: openrag
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   replicas: {{ .Values.openrag.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: openrag
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   template:
     metadata:
       labels:
         app.kubernetes.io/name: openrag
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
     spec:
       securityContext:
         {{- toYaml .Values.openrag.podSecurityContext | nindent 8 }}
@@ -33,7 +33,7 @@ spec:
               echo "Venv is ready."
           envFrom:
             - configMapRef:
-                name: {{ .Release.Name }}-env
+                name: {{ include "openrag-stack.fullname" . }}-env
           volumeMounts:
             - name: venv
               mountPath: /app/.venv
@@ -60,7 +60,7 @@ spec:
           {{- end }}
           envFrom:
             - configMapRef:
-                name: {{ .Release.Name }}-env
+                name: {{ include "openrag-stack.fullname" . }}-env
             - secretRef:
                 name: {{ include "openrag-stack.secretName" . }}
           volumeMounts:
@@ -77,30 +77,30 @@ spec:
       volumes:
         - name: model-weights
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-model-weights
+            claimName: {{ include "openrag-stack.fullname" . }}-model-weights
         - name: data
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-data
+            claimName: {{ include "openrag-stack.fullname" . }}-data
         - name: logs
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-logs
+            claimName: {{ include "openrag-stack.fullname" . }}-logs
         - name: venv
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-venv
+            claimName: {{ include "openrag-stack.fullname" . }}-venv
         # - name: egg-info
         #   emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-openrag
+  name: {{ include "openrag-stack.fullname" . }}-openrag
   labels:
     app.kubernetes.io/name: openrag
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   selector:
     app.kubernetes.io/name: openrag
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   ports:
     - protocol: TCP
       port: {{ .Values.openrag.service.port }}
@@ -127,7 +127,7 @@ spec:
             pathType: {{ .Values.openrag.ingress.pathType }}
             backend:
               service:
-                name: {{ .Release.Name }}-openrag
+                name: {{ include "openrag-stack.fullname" . }}-openrag
                 port:
                   number: {{ .Values.openrag.service.port }}
       {{- with .Values.openrag.ingress.host }}

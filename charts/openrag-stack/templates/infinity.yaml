@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-reranker
+  name: {{ include "openrag-stack.fullname" . }}-reranker
   labels:
     app.kubernetes.io/name: reranker
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   replicas: {{ .Values.reranker.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: reranker
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   template:
     metadata:
       labels:
         app.kubernetes.io/name: reranker
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
     spec:
       {{- if .Values.reranker.runtimeClassName }}
       runtimeClassName: {{ .Values.reranker.runtimeClassName }}
@@ -60,23 +60,23 @@ spec:
               mountPath: /app/.cache/huggingface
           envFrom:
             - configMapRef:
-                name: {{ .Release.Name }}-env
+                name: {{ include "openrag-stack.fullname" . }}-env
       volumes:
         - name: hf-cache
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-model-weights
+            claimName: {{ include "openrag-stack.fullname" . }}-model-weights
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-reranker
+  name: {{ include "openrag-stack.fullname" . }}-reranker
   labels:
     app.kubernetes.io/name: reranker
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   selector:
     app.kubernetes.io/name: reranker
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   ports:
     - protocol: TCP
       port: {{ .Values.reranker.service.port }}

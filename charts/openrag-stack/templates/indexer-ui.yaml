@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-indexer-ui
+  name: {{ include "openrag-stack.fullname" . }}-indexer-ui
   labels:
     app.kubernetes.io/name: indexer-ui
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   replicas: {{ .Values.indexerUi.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: indexer-ui
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   template:
     metadata:
       labels:
         app.kubernetes.io/name: indexer-ui
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
     spec:
       {{- with .Values.indexerUi.podSecurityContext }}
       securityContext:
@@ -46,10 +46,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-indexer-ui
+  name: {{ include "openrag-stack.fullname" . }}-indexer-ui
   labels:
     app.kubernetes.io/name: indexer-ui
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 spec:
   type: {{ .Values.indexerUi.service.type }}
   ports:
@@ -60,7 +60,7 @@ spec:
       {{- end }}
   selector:
     app.kubernetes.io/name: indexer-ui
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
 {{- if .Values.indexerUi.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
