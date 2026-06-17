@@ -4,7 +4,7 @@ include:
 
 x-openrag: &openrag_template
   # image: ghcr.io/linagora/openrag:dev-latest
-  image: linagoraai/openrag:1.1.11
+  image: linagoraai/openrag:1.1.12
   build:
     context: .
     dockerfile: Dockerfile
