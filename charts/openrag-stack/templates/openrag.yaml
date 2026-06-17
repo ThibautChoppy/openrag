@@ -44,6 +44,10 @@ spec:
             {{- toYaml .Values.openrag.containerSecurityContext | nindent 12 }}
           ports:
             - containerPort: {{ .Values.openrag.service.port }}
+            {{- if .Values.openrag.rayDashboard.ingress.enabled }}
+            - containerPort: 8265
+              name: ray-dashboard
+            {{- end }}
           resources:
             {{- toYaml .Values.openrag.resources | nindent 12 }}
           {{- if .Values.openrag.probes.startup }}
@@ -102,9 +106,16 @@ spec:
     app.kubernetes.io/name: openrag
     app.kubernetes.io/instance: {{ include "openrag-stack.fullname" . }}
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: {{ .Values.openrag.service.port }}
       targetPort: {{ .Values.openrag.service.port }}
+    {{- if .Values.openrag.rayDashboard.ingress.enabled }}
+    - name: ray-dashboard
+      protocol: TCP
+      port: 8265
+      targetPort: 8265
+    {{- end }}
   type: {{ .Values.openrag.service.type }}
 {{- if .Values.openrag.ingress.enabled }}
 ---
@@ -134,6 +145,38 @@ spec:
       host: {{ . | quote }}
       {{- end }}
   {{- with .Values.openrag.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- if .Values.openrag.rayDashboard.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openrag-stack.fullname" . }}-openrag-ray-dashboard
+  {{- with .Values.openrag.rayDashboard.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.openrag.rayDashboard.ingress.className }}
+  ingressClassName: {{ .Values.openrag.rayDashboard.ingress.className | quote }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.openrag.rayDashboard.ingress.path }}
+            pathType: {{ .Values.openrag.rayDashboard.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "openrag-stack.fullname" . }}-openrag
+                port:
+                  name: ray-dashboard
+      {{- with .Values.openrag.rayDashboard.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+  {{- with .Values.openrag.rayDashboard.ingress.tls }}
   tls:
     {{- toYaml . | nindent 4 }}
   {{- end }}

@@ -229,7 +229,6 @@ reranker:
   enabled: true
   # URL of an external reranker (vLLM or any OpenAI-compatible reranker).
   # When set, this overrides RERANKER_BASE_URL and no local reranker is deployed.
-  externalUrl: ""
   rerankerModelName: &rerankerModel "Alibaba-NLP/gte-multilingual-reranker-base"
   servicePort: &rerankerPort 7997
   image:
@@ -330,6 +329,18 @@ openrag:
     tls: []
     path: /
     pathType: Prefix
+  # Ray dashboard ingress — only relevant when ray.enabled=false (embedded Ray via ray.init()).
+  # When ray.enabled=true the dashboard is on the RayCluster head and has its own ingress (ray.ingress).
+  rayDashboard:
+    ingress:
+      enabled: false
+      className: ""
+      host: ""
+      annotations: {}
+        # nginx.ingress.kubernetes.io/rewrite-target: /
+      tls: []
+      path: /
+      pathType: Prefix
   resources:
     requests:
       cpu: "4"
@@ -457,7 +468,7 @@ env:
     RERANKER_MODEL: '{{ .Values.reranker.rerankerModelName }}'
     RERANKER_ENABLED: "true"
     RERANKER_TOP_K: "4"
-    RERANKER_BASE_URL: '{{ if .Values.reranker.externalUrl }}{{ .Values.reranker.externalUrl }}{{ else }}http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}{{ end }}'
+    RERANKER_BASE_URL: 'http://{{ .Release.Name }}-reranker:{{ .Values.reranker.servicePort }}'
     RERANKER_MODEL_TYPE: "infinity"
 
     # Prompts
