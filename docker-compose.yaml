@@ -5,7 +5,7 @@ include:
   - ${TRANSCRIBER_COMPOSE:-extern/dummy.yaml}
 
 x-openrag: &openrag_template
-  image: linagoraai/openrag:1.1.11
+  image: linagoraai/openrag:1.1.12
   # Run unprivileged with group 0. GID 0 (not PGID) matches the image, whose
   # runtime-write paths are group-owned by the root group, and works whether
   # this image was pulled or locally rebuilt. init-perms hands the bind-mounted
