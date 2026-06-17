@@ -3,11 +3,13 @@ apiVersion: ray.io/v1
 kind: RayCluster
 metadata:
   name: {{ .Release.Name }}-raycluster
+  {{- with .Values.ray.annotations }}
   annotations:
-    ray.io/overwrite-container-cmd: "true"
+    {{- . | toYaml | nindent 4 }}
+  {{- end }}
 spec:
-  rayVersion: "2.47.1"
-  enableInTreeAutoscaling: false
+  rayVersion: {{ .Values.ray.rayVersion }}
+  enableInTreeAutoscaling: {{ .Values.ray.enableInTreeAutoscaling }}
   headGroupSpec:
     serviceType: ClusterIP
     template:
@@ -152,7 +154,7 @@ spec:
                   mountPath: /app/.venv
               envFrom:
                 - configMapRef:
-                    name: {{ include "openrag-stack.fullname" . }}-env
+                    name: {{ include "openrag-stack.fullname" $ }}-env
                 - secretRef:
                     name: {{ include "openrag-stack.secretName" $ }}
               {{- with $.Values.ray.resources.worker }}

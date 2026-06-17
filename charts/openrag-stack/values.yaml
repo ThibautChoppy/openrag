@@ -33,6 +33,10 @@ kuberay:
 
 ray:
   enabled: true
+  rayVersion: "2.47.1"
+  enableInTreeAutoscaling: false
+  annotations:
+    ray.io/overwrite-container-cmd: "true"
   workers:
     count: 1
     replicas: 1
