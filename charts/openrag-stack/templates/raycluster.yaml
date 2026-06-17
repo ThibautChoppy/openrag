@@ -24,7 +24,7 @@ spec:
         {{- end }}
         initContainers:
           - name: init-venv-sync
-            image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
+            image: "{{ .Values.ray.image.registry | default .Values.global.image.registry }}/{{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}"
             command:
               - sh
               - -c
@@ -50,7 +50,7 @@ spec:
 
         containers:
           - name: ray-head
-            image: {{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}
+            image: "{{ .Values.ray.image.registry | default .Values.global.image.registry }}/{{ .Values.ray.image.repository }}:{{ .Values.ray.image.tag }}"
             command: ["uv"]
             args:
               - "run"
@@ -122,7 +122,7 @@ spec:
           {{- end }}
           initContainers:
             - name: init-venv
-              image: {{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}
+              image: "{{ $.Values.ray.image.registry | default $.Values.global.image.registry }}/{{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}"
               command:
                 - sh
                 - -c
@@ -137,7 +137,7 @@ spec:
                   mountPath: /app/.venv
           containers:
             - name: ray-worker
-              image: {{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}
+              image: "{{ $.Values.ray.image.registry | default $.Values.global.image.registry }}/{{ $.Values.ray.image.repository }}:{{ $.Values.ray.image.tag }}"
               command: ["/bin/bash", "-lc", "--"]
               args:
                 - uv run $KUBERAY_GEN_RAY_START_CMD

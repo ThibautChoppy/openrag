@@ -1,3 +1,7 @@
+global:
+  image:
+    registry: docker.io
+
 enabled: true
 
 # === Network isolation ===
@@ -39,7 +43,8 @@ ray:
   nodeSelector: {}
   resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
-    repository: ghcr.io/linagora/openrag-ray
+    registry: ghcr.io
+    repository: linagora/openrag-ray
     tag: "v1.1.12"
   resources:
     head:
@@ -260,7 +265,10 @@ reranker:
 indexerUi:
   enabled: true
 
-  image: "linagoraai/indexer-ui:v1.1.1"
+  image:
+    registry: ""
+    repository: "linagoraai/indexer-ui"
+    tag: v1.1.1
   imagePullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -301,6 +309,7 @@ indexerUi:
 # === OpenRAG main app ===
 openrag:
   image:
+    registry: ""
     repository: linagoraai/openrag
     tag: "v1.1.12"
   service:

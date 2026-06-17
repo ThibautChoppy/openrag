@@ -27,7 +27,7 @@ spec:
       {{- end }}
       containers:
         - name: indexer-ui
-          image: {{ .Values.indexerUi.image }}
+          image: "{{ .Values.indexerUi.image.registry | default .Values.global.image.registry }}/{{ .Values.indexerUi.image.repository }}:{{ .Values.indexerUi.image.tag }}"
           imagePullPolicy: {{ .Values.indexerUi.imagePullPolicy }}
           {{- with .Values.indexerUi.containerSecurityContext }}
           securityContext:

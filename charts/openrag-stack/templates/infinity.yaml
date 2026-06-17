@@ -28,7 +28,7 @@ spec:
       {{- end }}
       containers:
         - name: reranker
-          image: "{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
+          image: "{{ .Values.reranker.image.registry | default .Values.global.image.registry }}/{{ .Values.reranker.image.repository }}:{{ .Values.reranker.image.tag }}"
           securityContext:
             {{- toYaml .Values.reranker.containerSecurityContext | nindent 12 }}
           args:
