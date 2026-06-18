@@ -58,6 +58,9 @@ spec:
               mountPath: /app/logs
             - name: venv
               mountPath: /app/.venv
+            {{- with .Values.openrag.extraVolumeMounts }}
+            {{- . | toYaml | nindent 12 }}
+            {{- end }}
             # - name: egg-info
             #   mountPath: /app/openrag.egg-info
       volumes:
@@ -73,6 +76,9 @@ spec:
         - name: venv
           persistentVolumeClaim:
             claimName: {{ include "openrag-stack.fullname" . }}-venv
+        {{- with .Values.openrag.extraVolumes }}
+        {{- . | toYaml | nindent 8 }}
+        {{- end }}
         # - name: egg-info
         #   emptyDir: {}
 ---
