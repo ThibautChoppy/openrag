@@ -1,4 +1,6 @@
-# SSO Quick Start (OIDC)
+---
+title: SSO Quick Start (OIDC)
+---
 
 Configure OpenRag to delegate authentication to your corporate SSO (LemonLDAP::NG, Keycloak, Auth0, Azure AD, Okta…) in five steps.
 
@@ -128,7 +130,7 @@ By default OpenRag reads the claims from the verified ID token (`OIDC_CLAIM_SOUR
 
 By default, OpenRag **does not auto-create users** on first login. Each user must exist in the database with their OIDC `sub` stored in `external_user_id`.
 
-> **Skip this step entirely** by setting `OIDC_AUTO_PROVISION_LOGIN=true` in your `.env`. The callback then creates a non-admin user from the ID-token claims on first login and keeps `display_name` + `email` in sync with the IdP on every subsequent login. The trade-off: your IdP's user list becomes the source of truth for OpenRag accounts. See `docs/oidc.md` → [Auto-provisioning](./oidc.md#auto-provisioning-optional) for the full trust-model.
+> **Skip this step entirely** by setting `OIDC_AUTO_PROVISION_LOGIN=true` in your `.env`. The callback then creates a non-admin user from the ID-token claims on first login and keeps `display_name` + `email` in sync with the IdP on every subsequent login. The trade-off: your IdP's user list becomes the source of truth for OpenRag accounts. See the [Auto-provisioning](/openrag/documentation/oidc/#auto-provisioning-optional) section of the OIDC guide for the full trust-model.
 
 Ask the IdP admin for each user's `sub` claim value (stable identifier, NOT the username). Then create the user via the OpenRag admin API — you'll need an admin `AUTH_TOKEN` for this:
 
@@ -166,7 +168,7 @@ docker compose logs openrag --tail 50 | grep -i OIDC
 
 Open your browser at `https://rag.mycorp.com/` → it redirects to your SSO → you log in → you come back authenticated.
 
-If something goes wrong, see the full **[troubleshooting section in `docs/oidc.md`](./oidc.md#troubleshooting)**. Most issues fall into one of three categories:
+If something goes wrong, see the full **[troubleshooting section in the OIDC guide](/openrag/documentation/oidc/#troubleshooting)**. Most issues fall into one of three categories:
 
 1. **Issuer mismatch** (Step 2 — trailing slash).
 2. **Invalid redirect URI** (Step 1 — must match byte-for-byte).
