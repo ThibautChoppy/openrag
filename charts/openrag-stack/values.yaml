@@ -25,6 +25,7 @@ persistence:
     data: { size: 20Gi }
     hydraConfig: { size: 10Mi }
     logs: { size: 1Gi }
+    venv: { size: 15Gi }
 
 # === KubeRay operator (sub-chart) ===
 kuberay:
@@ -485,7 +486,7 @@ env:
     MARKER_POOL_SIZE: "3"
     MARKER_NUM_GPUS: "0.6"
     TRANSCRIBER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-whisper-engine-service/v1'
-    AUDIOLOADER: "VideoAudioLoader"
+    # AUDIOLOADER: "VideoAudioLoader"
 
     # Ray
     RAY_NUM_GPUS: "0.1"
