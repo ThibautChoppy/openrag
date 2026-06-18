@@ -76,6 +76,11 @@ ENV APP_iPORT=${APP_iPORT:-8080}
 # and uv's managed Python (/app/openrag, /app/conf, /opt/uv/python), stay
 # group-readable but NOT group-writable regardless of their source mode — the
 # arbitrary UID cannot create, rename, or replace entries in them.
+# The two exceptions under the otherwise read-only /app/openrag are Chainlit's
+# runtime-writable dirs: it creates ./.files at import time and writes
+# ./.chainlit/config.toml + translations on startup (WORKDIR is /app/openrag),
+# so both are pre-created and granted group-write below or the app crashes with
+# PermissionError: '/app/openrag/.files'.
 # We also bake a fixed non-root UID for plain Docker/Kubernetes, where the
 # arbitrary-UID remap does not happen; APP_UID is a build arg so a compose
 # build can match the host user that owns the bind-mounted volumes. The user's
@@ -85,10 +90,12 @@ RUN useradd --uid ${APP_UID} --gid 0 --no-log-init --no-create-home \
         --home-dir /app/home --shell /sbin/nologin openrag \
     && mkdir -p /app/home /app/data /app/db /app/logs /app/model_weights/hub \
         /app/.venv /app/openrag.egg-info /opt/uv/cache \
+        /app/openrag/.files /app/openrag/.chainlit \
     && chgrp -R 0 /app /opt/uv \
     && chmod -R g-w /app /opt/uv \
     && chmod -R g=u /app/home /app/data /app/db /app/logs /app/model_weights \
-        /app/.venv /app/openrag.egg-info /opt/uv/cache
+        /app/.venv /app/openrag.egg-info /opt/uv/cache \
+        /app/openrag/.files /app/openrag/.chainlit
 USER ${APP_UID}
 
 ENTRYPOINT ../entrypoint.sh
