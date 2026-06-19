@@ -8,6 +8,7 @@
 .venv/
 qdrant_storage/
 vdb/volumes
+.cache
 
 # other files and folders
 misc
