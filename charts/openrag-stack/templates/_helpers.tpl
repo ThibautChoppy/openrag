@@ -55,5 +55,9 @@ Environment secret name used by all consumers.
 When env.existingSecret is set, that name is returned directly.
 */}}
 {{- define "openrag-stack.secretName" -}}
-{{- .Values.env.existingSecret | default (printf "%s-env-secrets" .Release.Name) }}
+{{- if .Values.env.existingSecret }}
+{{- .Values.env.existingSecret }}
+{{- else }}
+{{- printf "%s-env-secrets" (include "openrag-stack.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
 {{- end }}

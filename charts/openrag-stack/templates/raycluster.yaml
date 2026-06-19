@@ -116,13 +116,13 @@ spec:
           volumes:
             - name: model-weights
               persistentVolumeClaim:
-                claimName: {{ $.Release.Name }}-model-weights
+                claimName: {{ include "openrag-stack.fullname" . }}-model-weights
             - name: data
               persistentVolumeClaim:
-                claimName: {{ $.Release.Name }}-data
+                claimName: {{ include "openrag-stack.fullname" . }}-data
             - name: logs
               persistentVolumeClaim:
-                claimName: {{ $.Release.Name }}-logs
+                claimName: {{ include "openrag-stack.fullname" . }}-logs
   {{- end }}
 {{- if .Values.ray.ingress.enabled }}
 ---

@@ -18,7 +18,8 @@ networkPolicy:
 persistence:
   enabled: true
   storageClass: &storageClass ""  # empty = use cluster default StorageClass
-  annotations: {}
+  annotations:
+    "helm.sh/resource-policy": keep
   accessMode: ReadWriteOnce
   volumes:
     modelWeights: { size: 50Gi }
@@ -32,7 +33,7 @@ kuberay:
   enabled: true
 
 ray:
-  enabled: true
+  enabled: false
   rayVersion: "2.47.1"
   enableInTreeAutoscaling: false
   annotations:
@@ -55,12 +56,14 @@ ray:
       requests:
         cpu: "4"
         memory: "8Gi"
+        nvidia.com/gpu: 1
     worker:
       requests:
         cpu: "4"
         memory: "8Gi"
+        nvidia.com/gpu: 1
   ingress:
-    enabled: true
+    enabled: false
     className: ""
     host: ""
     annotations: {}
@@ -303,6 +306,8 @@ indexerUi:
     runAsUser: 1000
     runAsGroup: 1000
     fsGroup: 1000
+  serviceAccountName: ""
+
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -314,7 +319,7 @@ openrag:
   image:
     registry: ""
     repository: linagoraai/openrag
-    tag: "v1.1.12"
+    tag: "v1.1.13"
   service:
     type: ClusterIP
     port: 8080
@@ -349,9 +354,11 @@ openrag:
     requests:
       cpu: "4"
       memory: "16Gi"
+      nvidia.com/gpu: 1
     limits:
       cpu: "4"
       memory: "16Gi"
+      nvidia.com/gpu: 1
   replicas: 1
   # Size of the /dev/shm emptyDir volume. Ray's plasma object store and Python
   # multiprocessing both use /dev/shm for POSIX semaphores and shared memory.
