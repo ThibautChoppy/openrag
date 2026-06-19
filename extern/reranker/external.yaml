@@ -1,0 +1,3 @@
+# Reranker externe — aucun container local déployé.
+# RERANKER_BASE_URL, RERANKER_MODEL et RERANKER_API_KEY doivent être définis dans .env.
+services: {}

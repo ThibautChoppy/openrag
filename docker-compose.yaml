@@ -1,7 +1,7 @@
 include:
   - vdb/milvus.yaml
   - ${CHAINLIT_DATALAYER_COMPOSE:-extern/dummy.yaml}
-  - extern/reranker/${RERANKER_PROVIDER:-infinity}.yaml
+  - extern/reranker/${RERANKER_COMPOSE:-infinity}.yaml
   - ${TRANSCRIBER_COMPOSE:-extern/dummy.yaml}
 
 x-openrag: &openrag_template
@@ -35,6 +35,7 @@ x-openrag: &openrag_template
     # - ./openrag:/app/openrag # For dev mode
     - /$SHARED_ENV:/ray_mount/.env # Shared environment variables
     - ./logs:/app/logs
+    - openrag_venv:/app/.venv
   ports:
     - ${APP_PORT:-8080}:${APP_iPORT:-8080}
     # Bind the Ray dashboard to localhost only: it has no authentication and
@@ -129,8 +130,9 @@ services:
           esac
         done
         mkdir -p /mnt/data /mnt/logs /mnt/db /mnt/hfcache /mnt/model_weights \
-                 /mnt/volumes/etcd /mnt/volumes/minio /mnt/volumes/milvus
-        chown -R ${PUID:-1000}:${PGID:-1000} /mnt/data /mnt/logs /mnt/hfcache /mnt/volumes
+                 /mnt/volumes/etcd /mnt/volumes/minio /mnt/volumes/milvus \
+                 /mnt/venv
+        chown -R ${PUID:-1000}:${PGID:-1000} /mnt/data /mnt/logs /mnt/hfcache /mnt/volumes /mnt/venv
         # model_weights defaults to the host user's shared ~/.cache/huggingface,
         # so chown only the mount point (not -R): enough to fix a dir Docker
         # created as root, without rewriting the user's whole model cache.
@@ -145,6 +147,7 @@ services:
       # NB: vdb/milvus.yaml is `include`d, so its default ./volumes resolves
       # relative to vdb/ — i.e. ./vdb/volumes from here. Keep these in sync.
       - ${MILVUS_VOLUME_DIRECTORY:-./vdb/volumes}:/mnt/volumes
+      - openrag_venv:/mnt/venv
     restart: "no"
 
   # OpenRAG Indexer UI
@@ -273,3 +276,5 @@ services:
     profiles:
       - "cpu"
 
+volumes:
+  openrag_venv:
