@@ -421,4 +421,4 @@ New table `oidc_sessions`:
 - API paths (`/v1`, `/indexer`, `/search`, etc.) without auth → 401 JSON response
 - Programmtic access: Bearer `users.token` accepted in both modes
 
-**See Also**: Full configuration and troubleshooting guide at `docs/oidc.md`.
+**See Also**: Full configuration and troubleshooting guide at `docs/content/docs/documentation/oidc.md` (quick start: `docs/content/docs/documentation/sso-quickstart.md`).

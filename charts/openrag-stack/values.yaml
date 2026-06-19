@@ -459,14 +459,7 @@ env:
     RAY_SERVE_PORT: "80"
 
     WITH_CHAINLIT_UI: "false"
-    SAVE_UPLOADED_FILES: "false"
-    API_NUM_WORKERS: "8"
-    INDEXERUI_URL: 'http://{{ include "openrag-stack.fullname" . }}-indexer-ui:{{ .Values.indexerUi.service.port }}'
-
-    # Vector DB
-    VDB_HOST: '{{ include "openrag-stack.fullname" . }}-milvus'
-    VDB_PORT: "19530"
-    VDB_CONNECTOR_NAME: "milvus"
+    SAVE_UPLOADED_FILES:"http://indexer-ui:3042"milvus"
 
     # PostgreSQL
     POSTGRES_HOST: '{{ include "openrag-stack.fullname" . }}-postgresql'
