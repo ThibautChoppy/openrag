@@ -46,7 +46,6 @@ ray:
   serviceAccountName: ""
   podSecurityContext: {}
   nodeSelector: {}
-  resources: {}  # e.g. limits: {"nvidia.com/gpu": 1}
   image:
     registry: ghcr.io
     repository: linagora/openrag-ray
