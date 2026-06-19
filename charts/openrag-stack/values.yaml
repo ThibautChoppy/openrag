@@ -353,6 +353,14 @@ openrag:
       cpu: "4"
       memory: "16Gi"
   replicas: 1
+  # Size of the /dev/shm emptyDir volume. Ray's plasma object store and Python
+  # multiprocessing both use /dev/shm for POSIX semaphores and shared memory.
+  # Kubernetes defaults /dev/shm to 64Mi which causes OOM/ENOSPC errors when
+  # running Marker workers. Set to ~30% of the container memory limit or more.
+  # Set to "" or null to disable (use the 64Mi kernel default).
+  shmSize: ""
+  extraVolumes: []
+  extraVolumeMounts: []
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -393,7 +401,8 @@ openrag:
 proxy:
   enabled: false
   url: "http://192.168.100.100:80"
-  noProxy: "localhost,127.0.0.1,.cluster.local,.svc,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,huggingface.co,hf.co,*.huggingface.co,*.hf.co"
+  # Add your OpenShift apps domain to bypass the proxy for internal routes (e.g. .apps.mycluster.example.com)
+  noProxy: "localhost,127.0.0.1,.cluster.local,.svc,10.0.0.0/8,172.16.0.0/12"
 
 # === Shared env (config + secrets) ===
 env:
@@ -486,14 +495,13 @@ env:
     MARKER_POOL_SIZE: "3"
     MARKER_NUM_GPUS: "0.6"
     TRANSCRIBER_BASE_URL: 'http://{{ include "openrag-stack.fullname" . }}-whisper-engine-service/v1'
-    # AUDIOLOADER: "VideoAudioLoader"
 
     # Ray
+    # RAY_ADDRESS: 'ray://{{ include "openrag-stack.fullname" . }}-raycluster-head-svc:10001'
     RAY_NUM_GPUS: "0.1"
     RAY_POOL_SIZE: "3"
     RAY_MAX_TASKS_PER_WORKER: "50"
     RAY_DASHBOARD_PORT: "8265"
-    # RAY_ADDRESS: 'ray://{{ include "openrag-stack.fullname" . }}-raycluster-head-svc:10001'
     RAY_task_retry_delay_ms: "3000"
     RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
 
