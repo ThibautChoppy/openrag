@@ -465,7 +465,7 @@ env:
     RAY_SERVE_PORT: "80"
 
     WITH_CHAINLIT_UI: "false"
-    SAVE_UPLOADED_FILES:"http://indexer-ui:3042"milvus"
+    SAVE_UPLOADED_FILES: "http://indexer-ui:3042/milvus"
 
     # PostgreSQL
     POSTGRES_HOST: '{{ include "openrag-stack.fullname" . }}-postgresql'
