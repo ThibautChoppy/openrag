@@ -138,9 +138,15 @@ spec:
             pathType: {{ .Values.openrag.ingress.pathType }}
             backend:
               service:
+                {{- if eq (toString .Values.env.config.ENABLE_RAY_SERVE) "true" }}
+                name: {{ include "openrag-stack.fullname" . }}-raycluster-head-svc
+                port:
+                  number: {{ .Values.env.config.RAY_SERVE_PORT | int }}
+                {{- else }}
                 name: {{ include "openrag-stack.fullname" . }}-openrag
                 port:
                   number: {{ .Values.openrag.service.port }}
+                {{- end }}
       {{- with .Values.openrag.ingress.host }}
       host: {{ . | quote }}
       {{- end }}
