@@ -176,6 +176,32 @@ services:
         condition: service_healthy
     # No hard dependency on vllm-cpu (see the GPU service above).
 
+  # AMD GPU (ROCm) — device passthrough instead of the nvidia runtime/deploy
+  # block above. Marker's own OCR inference stays on CPU here rather than
+  # switching torch to a ROCm build: uv only supports --torch-backend for the
+  # `uv pip` interface, not the `uv sync`/`uv run` project flow this image
+  # uses, so picking up ROCm torch would need pyproject.toml restructured
+  # with extras + explicit indexes (see
+  # https://docs.astral.sh/uv/guides/integration/pytorch/) — out of scope for
+  # a personal compose profile. CPU-based Marker OCR already works, just slower.
+  openrag-rocm:
+    <<: *openrag_template
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    profiles:
+      - "rocm"
+    depends_on:
+      rdb:
+        condition: service_started
+      milvus:
+        condition: service_healthy
+
   rdb:
     image: postgres:15
     environment:
@@ -204,6 +230,27 @@ services:
               capabilities: [gpu]
     profiles:
       - "" # Empty string gives default behavior (but does not run when cpu requested)
+
+  vllm-rocm:
+    <<: *vllm_template
+    image: rocm/vllm:latest
+    environment:
+      <<: *vllm_env
+      # RX 7800 XT is gfx1101, which isn't always in the officially-validated
+      # ROCm/vLLM GPU list — reporting as gfx1100 (7900 series, RDNA3, closest
+      # validated chip) is the standard workaround for consumer Navi 3x cards.
+      # Drop this if a future ROCm/vLLM release lists gfx1101 natively.
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    profiles:
+      - "rocm"
 
   vllm-cpu:
     <<: *vllm_template

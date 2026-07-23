@@ -40,3 +40,27 @@ services:
       --port 7997
     profiles:
       - 'cpu'
+
+  reranker-rocm:
+    <<: *reranker_template
+    image: michaelf34/infinity:latest-rocm
+    environment:
+      # See the same note on vllm-rocm in docker-compose.yaml: RX 7800 XT
+      # (gfx1101) reporting as gfx1100 (RDNA3, officially validated) is the
+      # standard workaround for this generation of consumer cards.
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    command: >
+      v2
+      --model-id ${RERANKER_MODEL:-Alibaba-NLP/gte-multilingual-reranker-base}
+      --api-key ${RERANKER_API_KEY:-"EMPTY"}
+      --port 7997
+    profiles:
+      - 'rocm'

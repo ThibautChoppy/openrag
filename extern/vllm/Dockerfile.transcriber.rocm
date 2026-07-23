@@ -1,0 +1,13 @@
+# ROCm counterpart to Dockerfile.transcriber. `latest` isn't pinned like the
+# CUDA image's v0.19.1 — ROCm base images have moved fast (a gfx1101
+# regression was reported when the ROCm 7.0 -> 7.1 base changed), so pin this
+# to a specific tag once you've confirmed it works, rather than trusting
+# `latest` long-term.
+#
+# NOT reinstalling `vllm[audio]==<version>` from PyPI like the CUDA Dockerfile
+# does: rocm/vllm ships a ROCm-compiled vllm build, and a plain `pip install
+# vllm==X` would pull the standard PyPI (CUDA/generic) wheel over it, silently
+# dropping ROCm support. Installing just the audio extra's runtime deps avoids
+# touching the vllm package itself.
+FROM rocm/vllm:latest
+RUN pip install --no-cache-dir librosa soundfile

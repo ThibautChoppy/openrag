@@ -23,3 +23,36 @@ services:
       --gpu_memory_utilization 0.2
     # ports:
     #   - ${TRANSCRIBER_PORT:-8002}:8000
+    profiles:
+      - ""
+
+  transcriber-rocm:
+    build:
+      context: .
+      dockerfile: ./vllm/Dockerfile.transcriber.rocm
+    environment:
+      - HUGGING_FACE_HUB_TOKEN
+      - VLLM_MAX_AUDIO_CLIP_FILESIZE_MB=10000
+      # See the same note on vllm-rocm in docker-compose.yaml: RX 7800 XT
+      # (gfx1101) reporting as gfx1100 (RDNA3, officially validated) is the
+      # standard workaround for this generation of consumer cards.
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    ipc: "host"
+    volumes:
+      - ${VLLM_CACHE:-/root/.cache/huggingface}:/root/.cache/huggingface
+    command: >
+      --model ${TRANSCRIBER_MODEL:-openai/whisper-large-v3-turbo}
+      --trust-remote-code
+      --gpu_memory_utilization 0.2
+    # ports:
+    #   - ${TRANSCRIBER_PORT:-8002}:8000
+    profiles:
+      - "rocm"
