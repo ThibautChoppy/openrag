@@ -4,15 +4,16 @@
 # with linagora/openrag (see .claude/rules/fork-context.md).
 #
 # Manually dispatched: checks out whatever `ref` you point it at (any
-# branch/tag/SHA in this fork) and pushes api/ray/admin-ui images to Docker
-# Hub under thibautchoppy/openrag(-ray|-admin-ui):<tag>. This lets you build
-# a test image from any branch's code without adding CI changes to that
-# branch's own upstream-bound PR.
+# branch/tag/SHA in this fork) and pushes api/ray/admin-ui images to ghcr
+# under ghcr.io/thibautchoppy/openrag(-ray|-admin-ui):<tag>. This lets you
+# build a test image from any branch's code without adding CI changes to
+# that branch's own upstream-bound PR.
 #
-# Requires `DOCKERHUB_USERNAME` (repo variable) and `DOCKERHUB_TOKEN` (repo
-# secret) configured on this fork, e.g.:
-#   gh variable set DOCKERHUB_USERNAME --repo ThibautChoppy/openrag --body <username>
-#   gh secret set DOCKERHUB_TOKEN --repo ThibautChoppy/openrag
+# Pushes with the built-in GITHUB_TOKEN — no repo secrets to configure.
+# `github.repository` preserves owner/repo casing verbatim (e.g. this fork's
+# mixed-case "ThibautChoppy/openrag"), but ghcr (like any OCI registry)
+# requires a lowercase repository path, so `vars` lowercases it once for the
+# other jobs to reuse.
 #
 # Usage:
 #   gh workflow run build_on_demand.yml --repo ThibautChoppy/openrag \
@@ -29,9 +30,14 @@ on:
         description: "Image tag to publish, e.g. v2.0.1 or v2.0.1-rc.1"
         required: true
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      image_name: ${{ steps.vars.outputs.image_name }}
     steps:
       - name: Validate tag format
         env:
@@ -42,11 +48,16 @@ jobs:
             exit 1
           fi
 
+      - name: Compute lowercase image name
+        id: vars
+        run: echo "image_name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
   build-and-push-api:
     needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,11 +70,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push api image
         uses: docker/build-push-action@v5
@@ -72,7 +84,7 @@ jobs:
           file: infra/docker/api.Dockerfile
           platforms: linux/amd64
           push: true
-          tags: thibautchoppy/openrag:${{ inputs.tag }}
+          tags: ${{ env.REGISTRY }}/${{ needs.validate.outputs.image_name }}:${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -81,6 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,11 +106,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ray image
         uses: docker/build-push-action@v5
@@ -106,7 +120,7 @@ jobs:
           file: infra/docker/ray.Dockerfile
           platforms: linux/amd64
           push: true
-          tags: thibautchoppy/openrag-ray:${{ inputs.tag }}
+          tags: ${{ env.REGISTRY }}/${{ needs.validate.outputs.image_name }}-ray:${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -115,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,11 +142,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push admin-ui image
         uses: docker/build-push-action@v5
@@ -140,6 +156,6 @@ jobs:
           file: infra/docker/ui.Dockerfile
           platforms: linux/amd64
           push: true
-          tags: thibautchoppy/openrag-admin-ui:${{ inputs.tag }}
+          tags: ${{ env.REGISTRY }}/${{ needs.validate.outputs.image_name }}-admin-ui:${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
