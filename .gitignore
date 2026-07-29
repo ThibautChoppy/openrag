@@ -9,6 +9,8 @@
 qdrant_storage/
 vdb/
 db/
+volumes/
+models/
 
 # other files and folders
 misc

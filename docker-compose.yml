@@ -1,0 +1,185 @@
+# Personal "as-planned" stack — fork-local, not for upstream PR.
+#
+# Architecture decided during the resource-planning pass (see
+# openrag-resource-map.html at the repo root):
+#
+#   - LLM + Embedder + VLM: NOT containerized. Served externally by LM Studio
+#     running bare-metal on the host, JIT-loading one role into VRAM at a
+#     time. Reached via host.docker.internal:1234 — see .env.
+#   - Reranker: llama.cpp (CPU) serving a local gte-multilingual-reranker-base
+#     GGUF, replacing the infinity:latest-rocm image (104 GB on disk — traced
+#     to duplicated PyTorch installs in that image, see michaelfeil/infinity
+#     issue #94; the model itself only ever needed ~1 GB of RAM). llama.cpp's
+#     real route is /reranking, but it aliases /rerank too — verified to match
+#     openrag's RERANKER_PROVIDER=openai request/response schema exactly
+#     ({"results":[{"index","relevance_score"}]}).
+#   - Transcription: no separate service. LocalWhisperLoader (faster-whisper,
+#     CPU, in-process Ray actor) is already conf/config.yaml's default loader
+#     for every audio extension — just WHISPER_MODEL / WHISPER_NUM_GPUS in
+#     .env, nothing to add here.
+#   - Marker (PDFLOADER=MarkerLoader): CPU-only, in-process — RAM, never VRAM.
+#   - Milvus stays: core/vector_stores/vector_store.py already defines a
+#     generic VectorStore ABC, but MilvusVectorStore is still its only
+#     implementation — ChromaVectorStore doesn't exist yet.
+#
+# Net effect: the openrag container itself needs no GPU/ROCm device
+# passthrough anymore — every GPU-touching role moved to LM Studio, entirely
+# outside Docker.
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${MILVUS_VOLUME_DIRECTORY:-./volumes}/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in your .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in your .env}
+    volumes:
+      - ${MILVUS_VOLUME_DIRECTORY:-./volumes}/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    image: milvusdb/milvus:v2.6.11
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in your .env}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in your .env}
+    volumes:
+      - ${MILVUS_VOLUME_DIRECTORY:-./volumes}/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    depends_on:
+      - etcd
+      - minio
+
+  rdb:
+    image: postgres:15
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env}
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+    volumes:
+      # Same physical directory the infra/compose/ stack already uses
+      # (../../db from there == ./db from here) — one Postgres data dir,
+      # whichever compose file you happen to run.
+      - ${DB_VOLUME:-./db}:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    expose:
+      - 5432
+
+  # Reranker — Infinity CPU (torch engine), loads the original HF model
+  # directly. Tried llama.cpp + a community GGUF conversion first
+  # (gpustack/gte-multilingual-reranker-base-GGUF): it failed with "unknown
+  # model architecture: 'new'" — that repo was converted with gpustack's own
+  # patched fork (llama-box), not vanilla llama.cpp, so upstream llama.cpp
+  # doesn't recognize the GTE ("NewModel") architecture tag. Reusing the
+  # already-proven reranker-cpu definition from extern/reranker/infinity.yaml
+  # instead — same michaelf34/infinity:latest-cpu image, same command, no GGUF
+  # conversion risk since it pulls the HF model directly.
+  reranker:
+    image: michaelf34/infinity:latest-cpu
+    volumes:
+      - ${VLLM_CACHE:-~/.cache/huggingface}:/app/.cache/huggingface
+    command: >
+      v2
+      --engine torch
+      --model-id ${RERANKER_MODEL:-Alibaba-NLP/gte-multilingual-reranker-base}
+      --api-key ${RERANKER_API_KEY:-EMPTY}
+      --port 7997
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7997/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      default:
+        aliases:
+          - reranker
+
+  openrag:
+    build:
+      # Build context is the repo root itself here (this file already lives
+      # at the root, unlike infra/compose/docker-compose.yaml's ../..).
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+      args:
+        APP_UID: ${APP_UID:-1000}
+    # Start as root so entrypoint.sh can grant GID-0 write on the bind-mounted
+    # writable dirs, then drops to the non-root app user before launching.
+    user: "0:0"
+    extra_hosts:
+      # Reach LM Studio (LLM/Embedder/VLM) running bare-metal on the host.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${DATA_VOLUME:-./data}:/app/data
+      - ./i8n:/app/openrag/.chainlit/translations
+      - ${MODEL_WEIGHTS_VOLUME:-~/.cache/huggingface}:/app/model_weights
+      - openrag_venv:/app/.venv
+      - ${SHARED_ENV:-./.env}:/ray_mount/.env
+      - ${LOG_VOLUME:-./logs}:/app/logs
+    ports:
+      - ${APP_PORT:-8080}:${APP_iPORT:-8080}
+      # Ray dashboard: localhost-only, no auth, arbitrary code execution via
+      # its job-submission API — never expose beyond the host.
+      - 127.0.0.1:${RAY_DASHBOARD_PORT:-8265}:8265
+      - ${CHAINLIT_PORT:-8090}:${CHAINLIT_PORT:-8090}
+    networks:
+      default:
+        aliases:
+          - openrag
+    env_file:
+      - ${SHARED_ENV:-.env}
+    environment:
+      # Marker's rendering font: bind-mounted dir the non-root app user owns,
+      # so the ~15MB download happens once and persists.
+      FONT_PATH: ${FONT_PATH:-/app/data/fonts/GoNotoCurrent-Regular.ttf}
+    shm_size: 10.24gb
+    depends_on:
+      rdb:
+        condition: service_started
+      milvus:
+        condition: service_healthy
+      reranker:
+        condition: service_healthy
+
+  admin-ui:
+    image: linagoraai/openrag-admin-ui:v2.0.0
+    build:
+      context: .
+      dockerfile: infra/docker/ui.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_BASE_PATH: "/app/"
+        VITE_GRAFANA_URL: ${VITE_GRAFANA_URL:-}
+        VITE_APP_NAME: ${VITE_APP_NAME:-OpenRAG}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_UI_PORT:-8081}:8080"
+
+volumes:
+  openrag_venv:
